@@ -1,0 +1,26 @@
+apiVersion: kubevirt.io/v1alpha3
+kind: VirtualMachineInstance
+metadata:
+  name: testvm-centos
+  labels:
+    special: testvm-centos
+  name: testvm-centos
+spec:
+      domain:
+        cpu:
+          cores: 8
+        resources:
+          limits:
+            nvidia.com/GK104GL_GRID_K520: 1
+          requests:
+            nvidia.com/GK104GL_GRID_K520: 1
+            memory: 8Gi
+        devices:
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+      volumes:
+        - name: rootdisk
+          persistentVolumeClaim:
+            claimName: centos-pvc6-1
