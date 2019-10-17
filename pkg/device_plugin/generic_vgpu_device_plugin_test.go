@@ -134,8 +134,7 @@ var _ = Describe("Generic Device", func() {
 		ctx := context.Background()
 		responses, err := dpi.Allocate(ctx, &requests)
 		Expect(err).To(BeNil())
-		Expect(responses.GetContainerResponses()[0].Envs["NVIDIA-PASSTHROUGH-DEVICES"]).To(Equal("1"))
-		Expect(responses.GetContainerResponses()[0].Envs["IS-VGPU"]).To(Equal("true"))
+		Expect(responses.GetContainerResponses()[0].Envs["VGPU_PASSTHROUGH_DEVICES_NVIDIA"]).To(Equal("1"))
 	})
 
 	It("Should not allocate a device", func() {
@@ -146,7 +145,7 @@ var _ = Describe("Generic Device", func() {
 		ctx := context.Background()
 		responses, err := dpi.Allocate(ctx, &requests)
 		Expect(err).To(BeNil())
-		Expect(responses.GetContainerResponses()[0].Envs["NVIDIA-PASSTHROUGH-DEVICES"]).To(Equal(""))
+		Expect(responses.GetContainerResponses()[0].Envs["VGPU_PASSTHROUGH_DEVICES_NVIDIA"]).To(Equal(""))
 	})
 
 	It("Should monitor health of device node", func() {

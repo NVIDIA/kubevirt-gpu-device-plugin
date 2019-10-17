@@ -40,26 +40,37 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+var deviceAddress1 = "1"
+var deviceAddress2 = "2"
+var deviceAddress3 = "3"
+var deviceAddress4 = "4"
+var deviceAddress5 = "5"
+var deviceAddress6 = "6"
+var deviceName = "1b80"
+var deviceName1 = "1b81"
+var vgpuDeviceName = "vGPUId"
+var vgpuDeviceName1 = "vGPUId1"
+
 func getFakeLinkDevicePlugin(basePath string, deviceAddress string, link string) (string, error) {
-	if deviceAddress == "1" {
+	if deviceAddress == deviceAddress1 {
 		if link == "driver" {
 			return "vfio-pci", nil
 		} else if link == "iommu_group" {
 			return "io_1", nil
 		}
-	} else if deviceAddress == "2" {
+	} else if deviceAddress == deviceAddress2 {
 		if link == "driver" {
 			return "vfio-pci", nil
 		} else if link == "iommu_group" {
 			return "io_2", nil
 		}
-	} else if deviceAddress == "3" {
+	} else if deviceAddress == deviceAddress3 {
 		if link == "driver" {
 			return "vfio-pci", nil
 		} else if link == "iommu_group" {
 			return "io_3", nil
 		}
-	} else if deviceAddress == "5" {
+	} else if deviceAddress == deviceAddress5 {
 		if link == "driver" {
 			return "vfio-pci", nil
 		}
@@ -68,51 +79,51 @@ func getFakeLinkDevicePlugin(basePath string, deviceAddress string, link string)
 }
 
 func getFakeIDFromFileDevicePlugin(basePath string, deviceAddress string, link string) (string, error) {
-	if deviceAddress == "1" || deviceAddress == "4" || deviceAddress == "5" {
+	if deviceAddress == deviceAddress1 || deviceAddress == deviceAddress4 || deviceAddress == deviceAddress5 {
 		if link == "vendor" {
-			return "10de", nil
+			return nvVendorID, nil
 		} else if link == "device" {
-			return "1b80", nil
+			return deviceName, nil
 		}
-	} else if deviceAddress == "2" {
+	} else if deviceAddress == deviceAddress2 {
 		if link == "vendor" {
-			return "10de", nil
+			return nvVendorID, nil
 		} else if link == "device" {
-			return "1b81", nil
+			return deviceName1, nil
 		}
-	} else if deviceAddress == "3" {
+	} else if deviceAddress == deviceAddress3 {
 		if link == "vendor" {
-			return "10de", nil
+			return nvVendorID, nil
 		}
 	}
 	return "", errors.New("Incorrect operation")
 }
 
 func fakeStartDevicePluginFunc(dp *GenericDevicePlugin) error {
-	if dp.deviceName == "1b81" {
+	if dp.deviceName == deviceName {
 		return errors.New("Incorrect operation")
 	}
 	return nil
 }
 
 func getFakeVgpuIDFromFile(basePath string, deviceAddress string, property string) (string, error) {
-	if deviceAddress == "1" || deviceAddress == "2" {
-		return "vGPUId", nil
-	} else if deviceAddress == "3" || deviceAddress == "4" {
-		return "vGPUId1", nil
+	if deviceAddress == deviceAddress1 || deviceAddress == deviceAddress2 {
+		return vgpuDeviceName, nil
+	} else if deviceAddress == deviceAddress3 || deviceAddress == deviceAddress4 {
+		return vgpuDeviceName1, nil
 	}
 	return "", errors.New("Incorrect operation")
 }
 
 func getFakeGpuIDforVpu(basePath string, deviceAddress string) (string, error) {
-	if deviceAddress == "1" || deviceAddress == "2" || deviceAddress == "3" {
+	if deviceAddress == deviceAddress1 || deviceAddress == deviceAddress2 || deviceAddress == deviceAddress3 {
 		return "GpuId", nil
 	}
 	return "", errors.New("Incorrect operation")
 }
 
 func fakeStartVgpuDevicePluginFunc(dp *GenericVGpuDevicePlugin) error {
-	if dp.deviceName == "vGPUId" {
+	if dp.deviceName == vgpuDeviceName {
 		return nil
 	}
 	return errors.New("Incorrect operation")
@@ -133,21 +144,21 @@ var _ = Describe("Device Plugin", func() {
 			workDir, err = ioutil.TempDir("", "kubevirt-test")
 			Expect(err).ToNot(HaveOccurred())
 
-			os.Mkdir(workDir+"/1", 0755)
+			os.Mkdir(workDir+"/"+deviceAddress1, 0755)
 
-			os.Symlink(linkDir+"/vfio-pci", filepath.Join(workDir, "1", "driver"))
+			os.Symlink(linkDir+"/vfio-pci", filepath.Join(workDir, deviceAddress1, "driver"))
 
 		})
 
 		It("Read driver with out error", func() {
-			driverID, err := readLinkFunc(workDir, "1", "driver")
+			driverID, err := readLinkFunc(workDir, deviceAddress1, "driver")
 			Expect(err).To(BeNil())
 			Expect(driverID).To(Equal("vfio-pci"))
 
 		})
 
 		It("Read driver from a missing location to throw error", func() {
-			driverID, err := readLinkFunc(workDir, "1", "iommu_group")
+			driverID, err := readLinkFunc(workDir, deviceAddress1, "iommu_group")
 			Expect(err).ShouldNot(BeNil())
 			Expect(driverID).To(Equal(""))
 
@@ -159,17 +170,17 @@ var _ = Describe("Device Plugin", func() {
 			workDir, err = ioutil.TempDir("", "kubevirt-test")
 			Expect(err).ToNot(HaveOccurred())
 			os.Mkdir(workDir+"/1", 0755)
-			ioutil.WriteFile(filepath.Join(workDir, "1", "vendor"), []byte("0x10de"), 0644)
+			ioutil.WriteFile(filepath.Join(workDir, deviceAddress1, "vendor"), []byte("0x10de"), 0644)
 		})
 
 		It("Read driver with out error", func() {
-			driverID, err := readIDFromFileFunc(workDir, "1", "vendor")
+			driverID, err := readIDFromFileFunc(workDir, deviceAddress1, "vendor")
 			Expect(err).To(BeNil())
-			Expect(driverID).To(Equal("10de"))
+			Expect(driverID).To(Equal(nvVendorID))
 		})
 
 		It("Read driver from a missing location to throw error", func() {
-			driverID, err := readIDFromFileFunc(workDir, "1", "iommu_group")
+			driverID, err := readIDFromFileFunc(workDir, deviceAddress1, "iommu_group")
 			Expect(err).ShouldNot(BeNil())
 			Expect(driverID).To(Equal(""))
 		})
@@ -181,17 +192,17 @@ var _ = Describe("Device Plugin", func() {
 			workDir, err = ioutil.TempDir("", "kubevirt-test")
 			Expect(err).ToNot(HaveOccurred())
 			os.Mkdir(workDir+"/1", 0755)
-			ioutil.WriteFile(filepath.Join(workDir, "1", "name"), []byte("GRID P100X-1B"), 0644)
+			ioutil.WriteFile(filepath.Join(workDir, deviceAddress1, "name"), []byte("GRID P100X-1B"), 0644)
 		})
 
 		It("Read vgpu id with out error", func() {
-			gpuID, err := readVgpuIDFromFile(workDir, "1", "name")
+			gpuID, err := readVgpuIDFromFile(workDir, deviceAddress1, "name")
 			Expect(err).To(BeNil())
 			Expect(gpuID).To(Equal("P100X-1B"))
 		})
 
 		It("Read vgpu id from a missing location to throw error", func() {
-			gpuID, err := readVgpuIDFromFile(workDir, "1", "error")
+			gpuID, err := readVgpuIDFromFile(workDir, deviceAddress1, "error")
 			Expect(err).ShouldNot(BeNil())
 			Expect(gpuID).To(Equal(""))
 		})
@@ -210,7 +221,7 @@ var _ = Describe("Device Plugin", func() {
 
 			os.Mkdir(workDir+"/1", 0755)
 
-			os.Symlink(linkDir+"/vfio-pci", filepath.Join(workDir, "1", "driver"))
+			os.Symlink(linkDir+"/vfio-pci", filepath.Join(workDir, deviceAddress1, "driver"))
 
 		})
 
@@ -238,19 +249,19 @@ var _ = Describe("Device Plugin", func() {
 			workDir, err = ioutil.TempDir("", "kubevirt-test")
 			Expect(err).ToNot(HaveOccurred())
 			basePath = workDir
-			os.Mkdir(filepath.Join(linkDir, "1"), 0755)
-			os.Mkdir(filepath.Join(linkDir, "2"), 0755)
-			os.Mkdir(filepath.Join(linkDir, "3"), 0755)
-			os.Mkdir(filepath.Join(linkDir, "4"), 0755)
-			os.Mkdir(filepath.Join(linkDir, "5"), 0755)
-			os.Mkdir(filepath.Join(linkDir, "6"), 0755)
+			os.Mkdir(filepath.Join(linkDir, deviceAddress1), 0755)
+			os.Mkdir(filepath.Join(linkDir, deviceAddress2), 0755)
+			os.Mkdir(filepath.Join(linkDir, deviceAddress3), 0755)
+			os.Mkdir(filepath.Join(linkDir, deviceAddress4), 0755)
+			os.Mkdir(filepath.Join(linkDir, deviceAddress5), 0755)
+			os.Mkdir(filepath.Join(linkDir, deviceAddress6), 0755)
 
-			os.Symlink(filepath.Join(linkDir, "1"), filepath.Join(workDir, "1"))
-			os.Symlink(filepath.Join(linkDir, "2"), filepath.Join(workDir, "2"))
-			os.Symlink(filepath.Join(linkDir, "3"), filepath.Join(workDir, "3"))
-			os.Symlink(filepath.Join(linkDir, "4"), filepath.Join(workDir, "4"))
-			os.Symlink(filepath.Join(linkDir, "5"), filepath.Join(workDir, "5"))
-			os.Symlink(filepath.Join(linkDir, "6"), filepath.Join(workDir, "6"))
+			os.Symlink(filepath.Join(linkDir, deviceAddress1), filepath.Join(workDir, deviceAddress1))
+			os.Symlink(filepath.Join(linkDir, deviceAddress2), filepath.Join(workDir, deviceAddress2))
+			os.Symlink(filepath.Join(linkDir, deviceAddress3), filepath.Join(workDir, deviceAddress3))
+			os.Symlink(filepath.Join(linkDir, deviceAddress4), filepath.Join(workDir, deviceAddress4))
+			os.Symlink(filepath.Join(linkDir, deviceAddress5), filepath.Join(workDir, deviceAddress5))
+			os.Symlink(filepath.Join(linkDir, deviceAddress6), filepath.Join(workDir, deviceAddress6))
 
 		})
 
@@ -281,17 +292,17 @@ var _ = Describe("Device Plugin", func() {
 			workDir, err = ioutil.TempDir("", "kubevirt-test")
 			Expect(err).ToNot(HaveOccurred())
 			vGpuBasePath = workDir
-			os.Mkdir(filepath.Join(linkDir, "1"), 0755)
-			os.Mkdir(filepath.Join(linkDir, "2"), 0755)
-			os.Mkdir(filepath.Join(linkDir, "3"), 0755)
-			os.Mkdir(filepath.Join(linkDir, "4"), 0755)
-			os.Mkdir(filepath.Join(linkDir, "5"), 0755)
+			os.Mkdir(filepath.Join(linkDir, deviceAddress1), 0755)
+			os.Mkdir(filepath.Join(linkDir, deviceAddress2), 0755)
+			os.Mkdir(filepath.Join(linkDir, deviceAddress3), 0755)
+			os.Mkdir(filepath.Join(linkDir, deviceAddress4), 0755)
+			os.Mkdir(filepath.Join(linkDir, deviceAddress5), 0755)
 
-			os.Symlink(filepath.Join(linkDir, "1"), filepath.Join(workDir, "1"))
-			os.Symlink(filepath.Join(linkDir, "2"), filepath.Join(workDir, "2"))
-			os.Symlink(filepath.Join(linkDir, "3"), filepath.Join(workDir, "3"))
-			os.Symlink(filepath.Join(linkDir, "4"), filepath.Join(workDir, "4"))
-			os.Symlink(filepath.Join(linkDir, "5"), filepath.Join(workDir, "5"))
+			os.Symlink(filepath.Join(linkDir, deviceAddress1), filepath.Join(workDir, deviceAddress1))
+			os.Symlink(filepath.Join(linkDir, deviceAddress2), filepath.Join(workDir, deviceAddress2))
+			os.Symlink(filepath.Join(linkDir, deviceAddress3), filepath.Join(workDir, deviceAddress3))
+			os.Symlink(filepath.Join(linkDir, deviceAddress4), filepath.Join(workDir, deviceAddress4))
+			os.Symlink(filepath.Join(linkDir, deviceAddress5), filepath.Join(workDir, deviceAddress5))
 
 		})
 
@@ -303,9 +314,9 @@ var _ = Describe("Device Plugin", func() {
 			createVgpuIDMap()
 
 			gpuList := gpuVgpuMap["GpuId"]
-			Expect(gpuList[0]).To(Equal("1"))
+			Expect(gpuList[0]).To(Equal(deviceAddress1))
 			vGpuList := vGpuMap["vGPUId"]
-			Expect(vGpuList[0].addr).To(Equal("1"))
+			Expect(vGpuList[0].addr).To(Equal(deviceAddress1))
 
 			go createDevicePlugins()
 			time.Sleep(3 * time.Second)

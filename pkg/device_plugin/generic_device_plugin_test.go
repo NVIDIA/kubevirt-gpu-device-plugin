@@ -43,6 +43,14 @@ import (
 )
 
 var devices []*pluginapi.Device
+var iommuGroup1 = "1"
+var iommuGroup2 = "2"
+var iommuGroup3 = "3"
+var iommuGroup4 = "4"
+var pciAddress1 = "11"
+var pciAddress2 = "22"
+var pciAddress3 = "33"
+var nvVendorID = "10de"
 
 type fakeDevicePluginListAndWatchServer struct {
 	grpc.ServerStream
@@ -56,25 +64,25 @@ func (x *fakeDevicePluginListAndWatchServer) Send(m *pluginapi.ListAndWatchRespo
 func getFakeIommuMap() map[string][]NvidiaGpuDevice {
 
 	var tempMap map[string][]NvidiaGpuDevice = make(map[string][]NvidiaGpuDevice)
-	tempMap["1"] = append(tempMap["1"], NvidiaGpuDevice{"11"})
-	tempMap["2"] = append(tempMap["2"], NvidiaGpuDevice{"22"})
-	tempMap["3"] = append(tempMap["3"], NvidiaGpuDevice{"33"})
+	tempMap[iommuGroup1] = append(tempMap[iommuGroup1], NvidiaGpuDevice{pciAddress1})
+	tempMap[iommuGroup2] = append(tempMap[iommuGroup2], NvidiaGpuDevice{pciAddress2})
+	tempMap[iommuGroup3] = append(tempMap[iommuGroup3], NvidiaGpuDevice{pciAddress3})
 	return tempMap
 }
 
 func getFakeLink(basePath string, deviceAddress string, link string) (string, error) {
-	if deviceAddress == "11" {
-		return "1", nil
-	} else if deviceAddress == "22" {
-		return "2", nil
+	if deviceAddress == pciAddress1 {
+		return iommuGroup1, nil
+	} else if deviceAddress == pciAddress2 {
+		return iommuGroup2, nil
 	} else {
 		return "", errors.New("Incorrect operation")
 	}
 }
 
 func getFakeIDFromFile(basePath string, deviceAddress string, link string) (string, error) {
-	if deviceAddress == "11" {
-		return "10de", nil
+	if deviceAddress == pciAddress1 {
+		return nvVendorID, nil
 	}
 	return "", errors.New("Incorrect operation")
 
@@ -95,22 +103,22 @@ var _ = Describe("Generic Device", func() {
 		workDir, err = ioutil.TempDir("", "kubevirt-test")
 		Expect(err).ToNot(HaveOccurred())
 
-		devicePath = path.Join(workDir, "1")
+		devicePath = path.Join(workDir, iommuGroup1)
 		fileObj, err := os.Create(devicePath)
 		Expect(err).ToNot(HaveOccurred())
 		fileObj.Close()
 
-		devicePath = path.Join(workDir, "2")
+		devicePath = path.Join(workDir, iommuGroup2)
 		fileObj, err = os.Create(devicePath)
 		Expect(err).ToNot(HaveOccurred())
 		fileObj.Close()
 
 		devs = append(devs, &pluginapi.Device{
-			ID:     "1",
+			ID:     iommuGroup1,
 			Health: pluginapi.Healthy,
 		})
 		devs = append(devs, &pluginapi.Device{
-			ID:     "2",
+			ID:     iommuGroup2,
 			Health: pluginapi.Healthy,
 		})
 		dpi = NewGenericDevicePlugin("foo", workDir+"/", devs)
@@ -137,14 +145,14 @@ var _ = Describe("Generic Device", func() {
 	})
 
 	It("Should allocate a device without error", func() {
-		devs := []string{"1"}
+		devs := []string{iommuGroup1}
 		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
 		ctx := context.Background()
 		responses, err := dpi.Allocate(ctx, &requests)
 		Expect(err).To(BeNil())
-		Expect(responses.GetContainerResponses()[0].Envs["NVIDIA-PASSTHROUGH-DEVICES"]).To(Equal("11"))
+		Expect(responses.GetContainerResponses()[0].Envs["GPU_PASSTHROUGH_DEVICES_NVIDIA"]).To(Equal(pciAddress1))
 		Expect(responses.GetContainerResponses()[0].Devices[0].HostPath).To(Equal("/dev/vfio/vfio"))
 		Expect(responses.GetContainerResponses()[0].Devices[0].ContainerPath).To(Equal("/dev/vfio/vfio"))
 		Expect(responses.GetContainerResponses()[0].Devices[0].Permissions).To(Equal("mrw"))
@@ -154,7 +162,7 @@ var _ = Describe("Generic Device", func() {
 	})
 
 	It("Should not allocate a device and also throw an error", func() {
-		devs := []string{"2"}
+		devs := []string{iommuGroup2}
 		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
@@ -164,7 +172,7 @@ var _ = Describe("Generic Device", func() {
 	})
 
 	It("Should not allocate a device and also throw an error", func() {
-		devs := []string{"3"}
+		devs := []string{iommuGroup3}
 		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
@@ -174,14 +182,14 @@ var _ = Describe("Generic Device", func() {
 	})
 
 	It("Should not allocate a device but not throw an error", func() {
-		devs := []string{"4"}
+		devs := []string{iommuGroup4}
 		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
 		ctx := context.Background()
 		responses, err := dpi.Allocate(ctx, &requests)
 		Expect(err).To(BeNil())
-		Expect(responses.GetContainerResponses()[0].Envs["NVIDIA-PASSTHROUGH-DEVICES"]).To(Equal(""))
+		Expect(responses.GetContainerResponses()[0].Envs["GPU_PASSTHROUGH_DEVICES_NVIDIA"]).To(Equal(""))
 	})
 
 	It("Should monitor health of device node", func() {
@@ -204,22 +212,22 @@ var _ = Describe("Generic Device", func() {
 		fakeEmpty := &pluginapi.Empty{}
 		go dpi.ListAndWatch(fakeEmpty, fakeServer)
 		time.Sleep(1 * time.Second)
-		Expect(devices[0].ID).To(Equal("1"))
-		Expect(devices[1].ID).To(Equal("2"))
+		Expect(devices[0].ID).To(Equal(iommuGroup1))
+		Expect(devices[1].ID).To(Equal(iommuGroup2))
 		Expect(devices[0].Health).To(Equal(pluginapi.Healthy))
 		Expect(devices[1].Health).To(Equal(pluginapi.Healthy))
 
-		dpi.unhealthy <- "2"
+		dpi.unhealthy <- iommuGroup2
 		time.Sleep(1 * time.Second)
-		Expect(devices[0].ID).To(Equal("1"))
-		Expect(devices[1].ID).To(Equal("2"))
+		Expect(devices[0].ID).To(Equal(iommuGroup1))
+		Expect(devices[1].ID).To(Equal(iommuGroup2))
 		Expect(devices[0].Health).To(Equal(pluginapi.Healthy))
 		Expect(devices[1].Health).To(Equal(pluginapi.Unhealthy))
 
-		dpi.healthy <- "2"
+		dpi.healthy <- iommuGroup2
 		time.Sleep(1 * time.Second)
-		Expect(devices[0].ID).To(Equal("1"))
-		Expect(devices[1].ID).To(Equal("2"))
+		Expect(devices[0].ID).To(Equal(iommuGroup1))
+		Expect(devices[1].ID).To(Equal(iommuGroup2))
 		Expect(devices[0].Health).To(Equal(pluginapi.Healthy))
 		Expect(devices[1].Health).To(Equal(pluginapi.Healthy))
 	})

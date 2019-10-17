@@ -199,8 +199,7 @@ func (dpi *GenericVGpuDevicePlugin) Allocate(ctx context.Context, reqs *pluginap
 		log.Printf("Allocated devices %s", devStr)
 		response := pluginapi.ContainerAllocateResponse{
 			Envs: map[string]string{
-				"NVIDIA-PASSTHROUGH-DEVICES": strings.Join(devStr, ","),
-				"IS-VGPU":                 "true",
+				"VGPU_PASSTHROUGH_DEVICES_NVIDIA": strings.Join(devStr, ","),
 			},
 		}
 
@@ -236,6 +235,7 @@ func (dpi *GenericVGpuDevicePlugin) healthCheck() error {
 	log.Println("Loading NVML")
 	if err := nvmlInit(); err != nil {
 		log.Printf("Failed to initialize NVML: %s.", err)
+		return err
 	}
 
 	defer func() { log.Println("Shutdown of NVML returned:", nvmlShutdown()) }()

@@ -1,8 +1,8 @@
-FROM fedora:27
+FROM centos:7
 
-COPY nvidia-vfio-pci-device-plugin /usr/bin/nvidia-vfio-pci-device-plugin
+COPY nvidia-kubevirt-gpu-device-plugin /usr/bin/nvidia-kubevirt-gpu-device-plugin
 
 COPY pci.ids /usr/pci.ids
 
-CMD ["nvidia-vfio-pci-device-plugin"]
+CMD ["nvidia-kubevirt-gpu-device-plugin"]
 

@@ -29,7 +29,7 @@
 dir=`pwd`
 echo $dir
 cd cmd
-go build -v -i -o $dir/_out/nvidia-vfio-pci-device-plugin || {
+go build -v -i -o $dir/_out/nvidia-kubevirt-gpu-device-plugin || {
         echo "Go Build Failed!!"
         exit 1
 }
