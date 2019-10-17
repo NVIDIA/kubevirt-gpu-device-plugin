@@ -1,4 +1,4 @@
-# NVIDIA device plugin for Kubernetes to pass through GPU and vGPU to Kubevirt VMs
+# NVIDIA K8s Device Plugin to assign GPUs and vGPUs to Kubevirt VMs
 
 ## Table of Contents
 - [About](#about)
@@ -8,7 +8,7 @@
 - [Docs](#docs)
 
 ## About
-This is a kubernetes device plugin that can discover and expose GPUs on a kubernetes node. This device plugin will allow to run GPU attached [Kubevirt](https://github.com/kubevirt/kubevirt/blob/master/README.md) VMs in your kubernetes cluster. Its specifically developed to serve Kubevirt workloads in a Kubernetes cluster and not containers.
+This is a kubernetes device plugin that can discover and expose GPUs and vGPUs on a kubernetes node. This device plugin will enable to launch GPU attached [Kubevirt](https://github.com/kubevirt/kubevirt/blob/master/README.md) VMs in your kubernetes cluster. Its specifically developed to serve Kubevirt workloads in a Kubernetes cluster.
 
 
 ## Features
@@ -27,7 +27,7 @@ Before starting the device plug, the GPUs on a kubernetes node need to configure
 ### Preparing a GPU to be used in pass through mode
 GPU needs to be loaded with VFIO-PCI driver to be used in pass through mode
 
-#### 1. Enable IOMMU on KVM Host
+##### 1. Enable IOMMU on KVM Host
 
   Append "**intel_iommu=on**" to "**GRUB_CMDLINE_LINUX**" 
 ```shell
@@ -45,70 +45,55 @@ GRUB_DISABLE_RECOVERY="true"
 grub2-mkconfig -o /boot/grub2/grub.cfg
 reboot
 ```
-#### 2. Determine the kernel module to which the GPU is bound by running the lspci command with the -k option on the NVIDIA GPUs on your host.
+After rebooting, verify IOMMU is enabled using following command
 ```shell
-$ lspci -d 10de: -k
-```
-The "**Kernel driver in use:**" field indicates the kernel module to which the GPU is bound.
-
-The following example shows that the NVIDIA Tesla M60 GPU with BDF 06:00.0 is bound to the **nouveau** kernel module
-```shell
-06:00.0 VGA compatible controller: NVIDIA Corporation GM204GL [Tesla M60] (rev a1)
-         Subsystem: NVIDIA Corporation Device 115e
-         Kernel driver in use: nouveau
-```
-#### 3. Unbind the GPU from nouveau kernel module.
-a. Change to the sysfs directory that represents the nouveau kernel module.
-```shell
-$ cd /sys/bus/pci/drivers/nouveau
-```
-b. Write the domain, bus, slot, and function of the GPU to the unbind file in this directory.
-```shell
-$ echo domain:bus:slot.function > unbind
+dmesg | grep -E "DMAR|IOMMU"
 ```
 
-This example writes the domain, bus, slot, and function of the GPU with the domain 0000 and PCI device BDF 06:00.0.
+##### 2. Enable vfio-pci kernel module
+
+**Determine vendor-ID and device-ID of the GPU using following command**
+
 ```shell
-$ echo 0000:06:00.0 > unbind
+lspci -nn | grep -i nvidia
 ```
-#### 4. Bind the GPU to the vfio-pci kernel module.
-a. Change to the sysfs directory that contains the PCI device information for the physical GPU.
+In the example below the vendor-ID is 10de and device-ID is 1b38
 ```shell
-$ cd /sys/bus/pci/devices/domain\:bus\:slot.function
-```
-This example changes to the sysfs directory that contains the PCI device information for the GPU with the domain 0000 and PCI device BDF 06:00.0.
-```shell
-$ cd /sys/bus/pci/devices/0000\:06\:00.0
-```
-b. Write the kernel module name vfio-pci to the driver_override file in this directory.
-```shell
-$ echo vfio-pci > driver_override
-```
-c. Change to the sysfs directory that represents the vfio-pci kernel module.
-```shell
-$ cd /sys/bus/pci/drivers/vfio-pci
-```
-d. Write the domain, bus, slot, and function of the GPU to the bind file in this directory.
-```shell
-$ echo domain:bus:slot.function > bind
+$ lspci -nn | grep -i nvidia
+04:00.0 3D controller [0302]: NVIDIA Corporation GP102GL [Tesla P40] [10de:1b38] (rev a1)
 ```
 
-This example writes the domain, bus, slot, and function of the GPU with the domain 0000 and PCI device BDF 06:00.0.
+**Update VFIO config**
 ```shell
-$ echo 0000:06:00.0 > bind
+echo "options vfio-pci ids=vendor-ID:device-ID" > /etc/modprobe.d/vfio.conf
 ```
-e. Change back to the sysfs directory that contains the PCI device information for the physical GPU.
+Considering vendor-ID is 10de and device-ID is 1b38 command will be as follows
 ```shell
-$ cd /sys/bus/pci/devices/domain\:bus\:slot.function
+echo "options vfio-pci ids=10de:1b38" > /etc/modprobe.d/vfio.conf
 ```
-f. Clear the content of the driver_override file in this directory.
+**Update config to load VFIO-PCI module after reboo**t
 ```shell
-$ echo > driver_override
+echo 'vfio-pci' > /etc/modules-load.d/vfio-pci.conf
+reboot
 ```
+
+**Verify VFIO-PCI driver is loaded for the GPU**
+```shell
+lspci -nnk -d 10de:
+```
+Output below shows that "Kernel driver in use" is "vfio-pci"
+```shell
+$ lspci -nnk -d 10de:
+04:00.0 3D controller [0302]: NVIDIA Corporation GP102GL [Tesla P40] [10de:1b38] (rev a1)
+        Subsystem: NVIDIA Corporation Device [10de:11d9]
+        Kernel driver in use: vfio-pci
+        Kernel modules: nouveau
+```
+--------------------------------------------------------------
 ### Preparing a GPU to be used in vGPU mode
 Nvidia Virtual GPU manager needs to be installed on the host to configure GPUs in vGPU mode.
 
-#### 1. Change to the mdev_supported_types directory for the physical GPU.
+##### 1. Change to the mdev_supported_types directory for the physical GPU.
 ```shell
 $ cd /sys/class/mdev_bus/domain\:bus\:slot.function/mdev_supported_types/
 ```
@@ -116,7 +101,7 @@ This example changes to the mdev_supported_types directory for the GPU with the 
 ```shell
 $ cd /sys/bus/pci/devices/0000\:06\:00.0/mdev_supported_types/
 ```
-#### 2. Find out which subdirectory of mdev_supported_types contains registration information for the vGPU type that you want to create.
+##### 2. Find out which subdirectory of mdev_supported_types contains registration information for the vGPU type that you want to create.
 ```shell
 $ grep -l "vgpu-type" nvidia-*/name
 vgpu-type
@@ -127,7 +112,7 @@ This example shows that the registration information for the M10-2Q vGPU type is
 $ grep -l "M10-2Q" nvidia-*/name
 nvidia-41/name
 ```
-#### 3. Confirm that you can create an instance of the vGPU type on the physical GPU.
+##### 3. Confirm that you can create an instance of the vGPU type on the physical GPU.
 ```shell
 $ cat subdirectory/available_instances
 ```
@@ -140,12 +125,12 @@ This example shows that four more instances of the M10-2Q vGPU type can be creat
 $ cat nvidia-41/available_instances
 4
 ```
-#### 4. Generate a correctly formatted universally unique identifier (UUID) for the vGPU.
+##### 4. Generate a correctly formatted universally unique identifier (UUID) for the vGPU.
 ```shell
 $ uuidgen
 aa618089-8b16-4d01-a136-25a0f3c73123
 ```
-### 5. Write the UUID that you obtained in the previous step to the create file in the registration information directory for the vGPU type that you want to create.
+##### 5. Write the UUID that you obtained in the previous step to the create file in the registration information directory for the vGPU type that you want to create.
 ```shell
 $ echo "uuid"> subdirectory/create
 ```
@@ -161,7 +146,7 @@ An mdev device file for the vGPU is added is added to the parent physical device
 
 The /sys/bus/mdev/devices/ directory contains a symbolic link to the mdev device file.
 
-#### 6. Confirm that the vGPU was created.
+##### 6. Confirm that the vGPU was created.
 ```shell
 $ ls -l /sys/bus/mdev/devices/
 total 0
@@ -172,7 +157,7 @@ lrwxrwxrwx. 1 root root 0 Nov 24 13:33 aa618089-8b16-4d01-a136-25a0f3c73123 -> .
 ### Deployment
 The daemon set creation yaml can be used to deploy the device plugin. 
 ```
-kubectl apply -f vfio-device-plugin.yaml
+kubectl apply -f nvidia-kubevirt-gpu-device-plugin.yaml
 ```
 
 Examples yamls for creating VMs with GPU/vGPU are in the `examples` folder

@@ -1,7 +1,7 @@
 apiVersion: extensions/v1beta1
 kind: DaemonSet
 metadata:
-  name: vfio-device-plugin-daemonset
+  name: nvidia-kubevirt-gpu-dp-daemonset
   namespace: kube-system
 spec:
   template:
@@ -12,7 +12,7 @@ spec:
       annotations:
         scheduler.alpha.kubernetes.io/critical-pod: ""
       labels:
-        name: vfio-device-plugin-ds
+        name: nvidia-kubevirt-gpu-dp-ds
     spec:
       tolerations:
       # Allow this pod to be rescheduled while the node is in "critical add-ons only" mode.
@@ -20,7 +20,7 @@ spec:
       - key: CriticalAddonsOnly
         operator: Exists
       containers:
-      - name: vfio-device-plugin-ctr
+      - name: nvidia-kubevirt-gpu-dp-ctr
         image: quay.io/nvidia/vfio-device-plugin:demo
         securityContext:
           allowPrivilegeEscalation: false

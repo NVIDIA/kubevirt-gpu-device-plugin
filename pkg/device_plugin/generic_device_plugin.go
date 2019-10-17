@@ -251,7 +251,7 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 		log.Printf("Allocated devices %s", devStr)
 		response := pluginapi.ContainerAllocateResponse{
 			Envs: map[string]string{
-				"NVIDIA-PASSTHROUGH-DEVICES": strings.Join(devStr, ","),
+				"GPU_PASSTHROUGH_DEVICES_NVIDIA": strings.Join(devStr, ","),
 			},
 			Devices: deviceSpecs,
 		}
