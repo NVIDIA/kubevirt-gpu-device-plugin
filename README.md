@@ -18,7 +18,9 @@ This is a kubernetes device plugin that can discover and expose GPUs and vGPUs o
 
 ## Prerequisites
 - Need to have Nvidia GPU configured for GPU pass thorugh or vGPU. Quickstart section provides details about this
-- Kubernetes version should be greater than equal to v1.11
+- Kubernetes version >= v1.11
+- Kubevirt release >= v0.22.0
+- Kubevirt GPU feature gate should be enabled. Feature gate is enabled by creating a ConfigMap. ConfigMap yaml can be found under /examples
 
 ## Quick Start
 
@@ -27,9 +29,9 @@ Before starting the device plug, the GPUs on a kubernetes node need to configure
 ### Preparing a GPU to be used in pass through mode
 GPU needs to be loaded with VFIO-PCI driver to be used in pass through mode
 
-##### 1. Enable IOMMU on KVM Host
+##### 1. Enable IOMMU and blacklist nouveau driver on KVM Host
 
-  Append "**intel_iommu=on**" to "**GRUB_CMDLINE_LINUX**" 
+  Append "**intel_iommu=on modprobe.blacklist=nouveau**" to "**GRUB_CMDLINE_LINUX**" 
 ```shell
 $ vi /etc/default/grub
 # line 6: add (if AMD CPU, add [amd_iommu=on])
@@ -38,7 +40,7 @@ GRUB_DISTRIBUTOR="$(sed 's, release .*$,,g' /etc/system-release)"
 GRUB_DEFAULT=saved
 GRUB_DISABLE_SUBMENU=true
 GRUB_TERMINAL_OUTPUT="console"
-GRUB_CMDLINE_LINUX="rd.lvm.lv=centos/root rd.lvm.lv=centos/swap rhgb quiet intel_iommu=on"
+GRUB_CMDLINE_LINUX="rd.lvm.lv=centos/root rd.lvm.lv=centos/swap rhgb quiet intel_iommu=on modprobe.blacklist=nouveau"
 GRUB_DISABLE_RECOVERY="true"
 ```
 ```shell
@@ -48,6 +50,10 @@ reboot
 After rebooting, verify IOMMU is enabled using following command
 ```shell
 dmesg | grep -E "DMAR|IOMMU"
+```
+Verify that nouveau is disabled
+```shell
+dmesg | grep -i nouveau
 ```
 
 ##### 2. Enable vfio-pci kernel module
