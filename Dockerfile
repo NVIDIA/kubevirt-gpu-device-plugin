@@ -24,25 +24,22 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#!/usr/bin/env bash
+FROM golang:1.13 AS builder
 
-dir=`pwd`
-echo $dir
-cd cmd
-go build -v -i -o $dir/_out/nvidia-kubevirt-gpu-device-plugin || {
-        echo "Go Build Failed!!"
-        exit 1
-}
-echo "***Go Build completely successfully!!***"
+ENV GOOS=linux\
+    GOARCH=amd64
 
-cp $dir/utils/Dockerfile $dir/_out || {
-        echo "Error moving Dockerfile !!"
-        exit 1
-}
-echo "***Moved Dockerfile Successfully***"
+WORKDIR /go/src/kubevirt-gpu-device-plugin
 
-cp $dir/utils/pci.ids $dir/_out || {
-        echo "Error moving pci.ids !!"
-        exit 1
-}
-echo "***Moved pci ids file Successfully***"
+COPY . . 
+
+RUN make build
+
+FROM centos:7
+
+COPY --from=builder /go/src/kubevirt-gpu-device-plugin/nvidia-kubevirt-gpu-device-plugin /usr/bin/
+
+COPY --from=builder /go/src/kubevirt-gpu-device-plugin/utils/pci.ids /usr/pci.ids
+
+CMD ["nvidia-kubevirt-gpu-device-plugin"]
+

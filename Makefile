@@ -29,14 +29,14 @@ DOCKER_REPO="quay.io/nvidia/vfio-device-plugin"
 DOCKER_TAG="devel"
 
 build:
-	./utils/build.sh
+	go build -o nvidia-kubevirt-gpu-device-plugin kubevirt-gpu-device-plugin/cmd
 test:
 	go test ./... -coverprofile=coverage.out -v
 test-coverage:
 	go tool cover -html=coverage.out
 clean:
-	rm -rf _out && rm -rf coverage.out
-build-image: build
-	docker build ./_out -t $(DOCKER_REPO):$(DOCKER_TAG)
+	rm -rf nvidia-kubevirt-gpu-device-plugin && rm -rf coverage.out
+build-image:
+	docker build . -t $(DOCKER_REPO):$(DOCKER_TAG) 
 push-image: build-image
 	 docker push $(DOCKER_REPO):$(DOCKER_TAG)
