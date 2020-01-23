@@ -3,7 +3,7 @@
 package nvml
 
 // #cgo LDFLAGS: -ldl -Wl,--unresolved-symbols=ignore-in-object-files
-// #include "nvml_dl.h"
+// #include "nvml.h"
 import "C"
 
 import (
@@ -58,7 +58,7 @@ func errorString(ret C.nvmlReturn_t) error {
 }
 
 func init_() error {
-	r := C.nvmlInit_dl()
+	r := dl.nvmlInit()
 	if r == C.NVML_ERROR_LIBRARY_NOT_FOUND {
 		return errors.New("could not load NVML library")
 	}
@@ -146,7 +146,21 @@ func WaitForEvent(es EventSet, timeout uint) (Event, error) {
 }
 
 func shutdown() error {
-	return errorString(C.nvmlShutdown_dl())
+	return errorString(dl.nvmlShutdown())
+}
+
+func systemGetCudaDriverVersion() (*uint, *uint, error) {
+	var v C.int
+
+	r := C.nvmlSystemGetCudaDriverVersion_v2(&v)
+	if r != C.NVML_SUCCESS {
+		return nil, nil, errorString(r)
+	}
+
+	major := uint(v / 1000)
+	minor := uint(v % 1000 / 10)
+
+	return &major, &minor, errorString(r)
 }
 
 func systemGetDriverVersion() (string, error) {
@@ -178,13 +192,32 @@ func deviceGetHandleByIndex(idx uint) (handle, error) {
 }
 
 func deviceGetTopologyCommonAncestor(h1, h2 handle) (*uint, error) {
-	var level C.nvmlGpuTopologyLevel_t
-
-	r := C.nvmlDeviceGetTopologyCommonAncestor_dl(h1.dev, h2.dev, &level)
-	if r == C.NVML_ERROR_FUNCTION_NOT_FOUND || r == C.NVML_ERROR_NOT_SUPPORTED {
+	r := dl.lookupSymbol("nvmlDeviceGetTopologyCommonAncestor")
+	if r == C.NVML_ERROR_FUNCTION_NOT_FOUND {
 		return nil, nil
 	}
+
+	var level C.nvmlGpuTopologyLevel_t
+	r = C.nvmlDeviceGetTopologyCommonAncestor(h1.dev, h2.dev, &level)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return nil, nil
+	}
+
 	return uintPtr(C.uint(level)), errorString(r)
+}
+
+func (h handle) deviceGetCudaComputeCapability() (*int, *int, error) {
+	var major, minor C.int
+
+	r := C.nvmlDeviceGetCudaComputeCapability(h.dev, &major, &minor)
+	if r != C.NVML_SUCCESS {
+		return nil, nil, errorString(r)
+	}
+
+	intMajor := int(major)
+	intMinor := int(minor)
+
+	return &intMajor, &intMinor, errorString(r)
 }
 
 func (h handle) deviceGetName() (*string, error) {
@@ -235,6 +268,58 @@ func (h handle) deviceGetBAR1MemoryInfo() (*uint64, *uint64, error) {
 		return nil, nil, nil
 	}
 	return uint64Ptr(bar1.bar1Total), uint64Ptr(bar1.bar1Used), errorString(r)
+}
+
+func (h handle) deviceGetNvLinkState(link uint) (*uint, error) {
+	var isActive C.nvmlEnableState_t
+
+	r := C.nvmlDeviceGetNvLinkState(h.dev, C.uint(link), &isActive)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return nil, nil
+	}
+
+	return uintPtr(C.uint(isActive)), errorString(r)
+}
+
+func (h handle) deviceGetNvLinkRemotePciInfo(link uint) (*string, error) {
+	var pci C.nvmlPciInfo_t
+
+	r := C.nvmlDeviceGetNvLinkRemotePciInfo(h.dev, C.uint(link), &pci)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return nil, nil
+	}
+
+	return stringPtr(&pci.busId[0]), errorString(r)
+}
+
+func (h handle) deviceGetAllNvLinkRemotePciInfo() ([]*string, error) {
+	busIds := []*string{}
+
+	for i := uint(0); i < C.NVML_NVLINK_MAX_LINKS; i++ {
+		state, err := h.deviceGetNvLinkState(i)
+		if err != nil {
+			return nil, err
+		}
+
+		if state == nil {
+			continue
+		}
+
+		if *state == C.NVML_FEATURE_ENABLED {
+			pci, err := h.deviceGetNvLinkRemotePciInfo(i)
+			if err != nil {
+				return nil, err
+			}
+
+			if pci == nil {
+				continue
+			}
+
+			busIds = append(busIds, pci)
+		}
+	}
+
+	return busIds, nil
 }
 
 func (h handle) deviceGetPowerManagementLimit() (*uint, error) {
@@ -330,14 +415,37 @@ func (h handle) deviceGetDecoderUtilization() (*uint, error) {
 	return uintPtr(usage), errorString(r)
 }
 
-func (h handle) deviceGetMemoryInfo() (*uint64, error) {
+func (h handle) deviceGetMemoryInfo() (totalMem *uint64, devMem DeviceMemory, err error) {
 	var mem C.nvmlMemory_t
 
 	r := C.nvmlDeviceGetMemoryInfo(h.dev, &mem)
 	if r == C.NVML_ERROR_NOT_SUPPORTED {
-		return nil, nil
+		return
 	}
-	return uint64Ptr(mem.used), errorString(r)
+
+	err = errorString(r)
+	if r != C.NVML_SUCCESS {
+		return
+	}
+
+	totalMem = uint64Ptr(mem.total)
+	if totalMem != nil {
+		*totalMem /= 1024 * 1024 // MiB
+	}
+
+	devMem = DeviceMemory{
+		Used: uint64Ptr(mem.used),
+		Free: uint64Ptr(mem.free),
+	}
+
+	if devMem.Used != nil {
+		*devMem.Used /= 1024 * 1024 // MiB
+	}
+
+	if devMem.Free != nil {
+		*devMem.Free /= 1024 * 1024 // MiB
+	}
+	return
 }
 
 func (h handle) deviceGetClockInfo() (*uint, *uint, error) {
@@ -543,4 +651,69 @@ func processName(pid uint) (string, error) {
 		return "", err
 	}
 	return strings.TrimSuffix(string(d), "\n"), err
+}
+
+func (h handle) getAccountingInfo() (accountingInfo Accounting, err error) {
+	var mode C.nvmlEnableState_t
+	var buffer C.uint
+
+	r := C.nvmlDeviceGetAccountingMode(h.dev, &mode)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return
+	}
+
+	if r != C.NVML_SUCCESS {
+		return accountingInfo, errorString(r)
+	}
+
+	r = C.nvmlDeviceGetAccountingBufferSize(h.dev, &buffer)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return
+	}
+
+	if r != C.NVML_SUCCESS {
+		return accountingInfo, errorString(r)
+	}
+
+	accountingInfo = Accounting{
+		Mode:       ModeState(mode),
+		BufferSize: uintPtr(buffer),
+	}
+	return
+}
+
+func (h handle) getDisplayInfo() (display Display, err error) {
+	var mode, isActive C.nvmlEnableState_t
+
+	r := C.nvmlDeviceGetDisplayActive(h.dev, &mode)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return
+	}
+
+	if r != C.NVML_SUCCESS {
+		return display, errorString(r)
+	}
+
+	r = C.nvmlDeviceGetDisplayMode(h.dev, &isActive)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return
+	}
+	if r != C.NVML_SUCCESS {
+		return display, errorString(r)
+	}
+	display = Display{
+		Mode:   ModeState(mode),
+		Active: ModeState(isActive),
+	}
+	return
+}
+
+func (h handle) getPeristenceMode() (state ModeState, err error) {
+	var mode C.nvmlEnableState_t
+
+	r := C.nvmlDeviceGetPersistenceMode(h.dev, &mode)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return
+	}
+	return ModeState(mode), errorString(r)
 }
