@@ -1,3 +1,4 @@
 _out
 vendor/**/*_test.go
 coverage.out
+nvidia-kubevirt-gpu-device-plugin
