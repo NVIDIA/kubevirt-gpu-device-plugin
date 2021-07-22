@@ -101,7 +101,7 @@ func createDevicePlugins() {
 		deviceName := getDeviceName(k)
 		if deviceName == "" {
 			log.Printf("Error: Could not find device name for device id: %s", k)
-			continue
+			deviceName = k
 		}
 		log.Printf("DP Name %s", deviceName)
 		dp := NewGenericDevicePlugin(deviceName, "/sys/kernel/iommu_groups/", devs)
