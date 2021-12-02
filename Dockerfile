@@ -24,6 +24,10 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+ARG CUDA_IMAGE=cuda
+ARG CUDA_VERSION=11.4.2
+ARG BASE_DIST=centos7
+
 FROM golang:1.13 AS builder
 
 ENV GOOS=linux\
@@ -35,11 +39,13 @@ COPY . .
 
 RUN make build
 
-FROM centos:7
+FROM nvcr.io/nvidia/${CUDA_IMAGE}:${CUDA_VERSION}-base-${BASE_DIST}
 
 COPY --from=builder /go/src/kubevirt-gpu-device-plugin/nvidia-kubevirt-gpu-device-plugin /usr/bin/
 
 COPY --from=builder /go/src/kubevirt-gpu-device-plugin/utils/pci.ids /usr/pci.ids
+
+RUN yum update -y
 
 CMD ["nvidia-kubevirt-gpu-device-plugin"]
 
