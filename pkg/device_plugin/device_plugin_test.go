@@ -198,7 +198,7 @@ var _ = Describe("Device Plugin", func() {
 		It("Read vgpu id with out error", func() {
 			gpuID, err := readVgpuIDFromFile(workDir, deviceAddress1, "name")
 			Expect(err).To(BeNil())
-			Expect(gpuID).To(Equal("P100X-1B"))
+			Expect(gpuID).To(Equal("GRID_P100X-1B"))
 		})
 
 		It("Read vgpu id from a missing location to throw error", func() {

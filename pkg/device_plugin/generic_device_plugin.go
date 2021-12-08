@@ -48,6 +48,9 @@ const (
 	DeviceNamespace   = "nvidia.com"
 	connectionTimeout = 5 * time.Second
 	vfioDevicePath    = "/dev/vfio"
+	gpuType           = "VFIO-PCI"
+	gpuPrefix         = "PCI_RESOURCE_NVIDIA_COM"
+	vgpuPrefix        = "MDEV_PCI_RESOURCE_NVIDIA_COM"
 )
 
 var returnIommuMap = getIommuMap
@@ -78,6 +81,14 @@ func NewGenericDevicePlugin(deviceName string, devicePath string, devices []*plu
 		devicePath: devicePath,
 	}
 	return dpi
+}
+
+func buildEnv(envList map[string][]string) map[string]string {
+	env := map[string]string{}
+	for key, devList := range envList {
+		env[key] = strings.Join(devList, ",")
+	}
+	return env
 }
 
 func waitForGrpcServer(socketPath string, timeout time.Duration) error {
@@ -217,10 +228,13 @@ func (dpi *GenericDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.Dev
 func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
 	log.Println("In allocate")
 	responses := pluginapi.AllocateResponse{}
+	envList := map[string][]string{}
+
 	for _, req := range reqs.ContainerRequests {
-		var devStr []string
 		deviceSpecs := make([]*pluginapi.DeviceSpec, 0)
 		for _, iommuId := range req.DevicesIDs {
+			devAddrs := []string{}
+
 			returnedMap := returnIommuMap()
 			//Retrieve the devices associated with a Iommu group
 			nvDev := returnedMap[iommuId]
@@ -235,7 +249,9 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 					log.Println("Vendor has changed on the system ", dev.addr)
 					return nil, fmt.Errorf("invalid allocation request: unknown device: %s", dev.addr)
 				}
-				devStr = append(devStr, dev.addr)
+
+				devAddrs = append(devAddrs, dev.addr)
+
 			}
 			deviceSpecs = append(deviceSpecs, &pluginapi.DeviceSpec{
 				HostPath:      filepath.Join(vfioDevicePath, "vfio"),
@@ -247,12 +263,17 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 				ContainerPath: filepath.Join(vfioDevicePath, iommuId),
 				Permissions:   "mrw",
 			})
+
+			key := fmt.Sprintf("%s_%s", gpuPrefix, dpi.deviceName)
+			if _, exists := envList[key]; !exists {
+				envList[key] = []string{}
+			}
+			envList[key] = append(envList[key], devAddrs...)
 		}
-		log.Printf("Allocated devices %s", devStr)
+		envs := buildEnv(envList)
+		log.Printf("Allocated devices %s", envs)
 		response := pluginapi.ContainerAllocateResponse{
-			Envs: map[string]string{
-				"GPU_PASSTHROUGH_DEVICES_NVIDIA": strings.Join(devStr, ","),
-			},
+			Envs:    envs,
 			Devices: deviceSpecs,
 		}
 
