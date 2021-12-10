@@ -1,5 +1,7 @@
 # NVIDIA K8s Device Plugin to assign GPUs and vGPUs to Kubevirt VMs
 
+> Starting from v1.1.0, we will only be supporting KubeVirt v0.36.0 or newer. Please use v1.0.1 for compatibility with older KubeVirt versions.
+
 ## Table of Contents
 - [About](#about)
 - [Features](#features)
@@ -20,11 +22,14 @@ This is a kubernetes device plugin that can discover and expose GPUs and vGPUs o
 - Need to have Nvidia GPU configured for GPU pass thorugh or vGPU. Quickstart section provides details about this
 - Kubernetes version >= v1.11
 - Kubevirt release >= v0.36.0
-- Kubevirt GPU feature gate should be enabled. Feature gate is enabled by creating a ConfigMap. ConfigMap yaml can be found under /examples
+- Kubevirt GPU feature gate should be enabled and permitted devices should be whitelisted. Feature gate is enabled by creating a ConfigMap. ConfigMap yaml can be found under `/examples`.
 
 ## Quick Start
 
 Before starting the device plug, the GPUs on a kubernetes node need to configured to be in GPU pass through mode or vGPU mode
+
+### Whitelist GPU and vGPU in KubeVirt CR
+GPUs and vGPUs should be whitelisted in KubeVirt CR following the instructions outlined [here](https://kubevirt.io/user-guide/virtual_machines/host-devices/#listing-permitted-devices). An example KubeVirt CR can be found under `/examples`.
 
 ### Preparing a GPU to be used in pass through mode
 GPU needs to be loaded with VFIO-PCI driver to be used in pass through mode

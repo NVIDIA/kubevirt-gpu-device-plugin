@@ -1,9 +1,21 @@
-apiVersion: v1
-kind: ConfigMap
+apiVersion: kubevirt.io/v1alpha3
+kind: KubeVirt
 metadata:
-  name: kubevirt-config
+  name: kubevirt
   namespace: kubevirt
-  labels:
-    kubevirt.io: ""
-data:
-  feature-gates: "GPU"
+spec:
+  imagePullPolicy: IfNotPresent
+  certificateRotateStrategy: {}
+  configuration:
+    pciHostDevices:
+    # whitelist the permitted devices here
+    - pciVendorSelector: "10DE:1EB8"
+      resourceName: "nvidia.com/TU104GL_Tesla_T4"
+      externalResourceProvider: true
+    mediatedDevices:
+    - mdevNameSelector: "GRID T4-1Q"
+      resourceName: "nvidia.com/GRID_T4-1Q"
+    imagePullPolicy: IfNotPresent
+    developerConfiguration:
+      featureGates:
+        - GPU

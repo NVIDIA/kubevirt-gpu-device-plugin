@@ -48,7 +48,6 @@ const (
 	DeviceNamespace   = "nvidia.com"
 	connectionTimeout = 5 * time.Second
 	vfioDevicePath    = "/dev/vfio"
-	gpuType           = "VFIO-PCI"
 	gpuPrefix         = "PCI_RESOURCE_NVIDIA_COM"
 	vgpuPrefix        = "MDEV_PCI_RESOURCE_NVIDIA_COM"
 )
