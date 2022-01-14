@@ -186,21 +186,35 @@ func (dpi *GenericVGpuDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi
 func (dpi *GenericVGpuDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
 	log.Println("In allocate")
 	responses := pluginapi.AllocateResponse{}
+
 	for _, req := range reqs.ContainerRequests {
-		var devStr []string
+		deviceSpecs := make([]*pluginapi.DeviceSpec, 0)
+		envList := map[string][]string{}
+
 		for _, str := range req.DevicesIDs {
 			vGpuID, err := readVgpuIDFromFile(vGpuBasePath, str, "mdev_type/name")
 			if err != nil || vGpuID != dpi.deviceName {
 				log.Println("Could not get vGPU type identifier for device ", str)
 				continue
 			}
-			devStr = append(devStr, str)
+
+			key := fmt.Sprintf("%s_%s", vgpuPrefix, dpi.deviceName)
+			if _, exists := envList[key]; !exists {
+				envList[key] = []string{}
+			}
+			envList[key] = append(envList[key], str)
 		}
-		log.Printf("Allocated devices %s", devStr)
+		deviceSpecs = append(deviceSpecs, &pluginapi.DeviceSpec{
+			HostPath:      vfioDevicePath,
+			ContainerPath: vfioDevicePath,
+			Permissions:   "mrw",
+		})
+
+		envs := buildEnv(envList)
+		log.Printf("Allocated devices %s", envs)
 		response := pluginapi.ContainerAllocateResponse{
-			Envs: map[string]string{
-				"VGPU_PASSTHROUGH_DEVICES_NVIDIA": strings.Join(devStr, ","),
-			},
+			Envs:    envs,
+			Devices: deviceSpecs,
 		}
 
 		responses.ContainerResponses = append(responses.ContainerResponses, &response)

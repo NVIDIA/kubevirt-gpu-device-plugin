@@ -116,11 +116,6 @@ var _ = Describe("Generic Device", func() {
 		os.RemoveAll(workDir)
 	})
 
-	It("Should register a new device plugin without error", func() {
-		err := dpi.Register()
-		Expect(err).To(BeNil())
-	})
-
 	It("Should stop device plugin without error", func() {
 		err := dpi.Stop()
 		Expect(err).To(BeNil())
@@ -128,13 +123,14 @@ var _ = Describe("Generic Device", func() {
 
 	It("Should allocate a device without error", func() {
 		devs := []string{"1"}
+		envKey := vgpuPrefix + "_vGPUId"
 		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
 		ctx := context.Background()
 		responses, err := dpi.Allocate(ctx, &requests)
 		Expect(err).To(BeNil())
-		Expect(responses.GetContainerResponses()[0].Envs["VGPU_PASSTHROUGH_DEVICES_NVIDIA"]).To(Equal("1"))
+		Expect(responses.GetContainerResponses()[0].Envs[envKey]).To(Equal("1"))
 	})
 
 	It("Should not allocate a device", func() {
@@ -145,7 +141,8 @@ var _ = Describe("Generic Device", func() {
 		ctx := context.Background()
 		responses, err := dpi.Allocate(ctx, &requests)
 		Expect(err).To(BeNil())
-		Expect(responses.GetContainerResponses()[0].Envs["VGPU_PASSTHROUGH_DEVICES_NVIDIA"]).To(Equal(""))
+		Expect(responses.GetContainerResponses()[0].Envs[vgpuPrefix]).To(Equal(""))
+		Expect(responses.GetContainerResponses()[0].Devices[0].HostPath).To(Equal("/dev/vfio"))
 	})
 
 	It("Should monitor health of device node", func() {

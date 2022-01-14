@@ -263,14 +263,15 @@ func readLinkFunc(basePath string, deviceAddress string, link string) (string, e
 
 //Read vGPU type name from the corresponding file
 func readVgpuIDFromFileFunc(basePath string, deviceAddress string, property string) (string, error) {
+	reg, _ := regexp.Compile("\\s+")
 	data, err := ioutil.ReadFile(filepath.Join(basePath, deviceAddress, property))
 	if err != nil {
 		glog.Errorf("Could not read %s for device %s: %s", property, deviceAddress, err)
 		return "", err
 	}
 	str := strings.Trim(string(data[:]), "\n")
-	strArray := strings.Split(str, " ")
-	return strArray[1], nil
+	str = reg.ReplaceAllString(str, "_") // Replace all spaces with underscore
+	return str, nil
 }
 
 //Read GPU id for a specific vGPU

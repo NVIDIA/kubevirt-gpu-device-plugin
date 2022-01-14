@@ -133,12 +133,6 @@ var _ = Describe("Generic Device", func() {
 	})
 
 	It("Should register a new device without error", func() {
-		err := dpi.Register()
-
-		Expect(err).To(BeNil())
-	})
-
-	It("Should register a new device without error", func() {
 		err := dpi.Stop()
 
 		Expect(err).To(BeNil())
@@ -146,13 +140,14 @@ var _ = Describe("Generic Device", func() {
 
 	It("Should allocate a device without error", func() {
 		devs := []string{iommuGroup1}
+		envKey := gpuPrefix + "_foo"
 		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
 		ctx := context.Background()
 		responses, err := dpi.Allocate(ctx, &requests)
 		Expect(err).To(BeNil())
-		Expect(responses.GetContainerResponses()[0].Envs["GPU_PASSTHROUGH_DEVICES_NVIDIA"]).To(Equal(pciAddress1))
+		Expect(responses.GetContainerResponses()[0].Envs[envKey]).To(Equal(pciAddress1))
 		Expect(responses.GetContainerResponses()[0].Devices[0].HostPath).To(Equal("/dev/vfio/vfio"))
 		Expect(responses.GetContainerResponses()[0].Devices[0].ContainerPath).To(Equal("/dev/vfio/vfio"))
 		Expect(responses.GetContainerResponses()[0].Devices[0].Permissions).To(Equal("mrw"))
@@ -189,7 +184,7 @@ var _ = Describe("Generic Device", func() {
 		ctx := context.Background()
 		responses, err := dpi.Allocate(ctx, &requests)
 		Expect(err).To(BeNil())
-		Expect(responses.GetContainerResponses()[0].Envs["GPU_PASSTHROUGH_DEVICES_NVIDIA"]).To(Equal(""))
+		Expect(responses.GetContainerResponses()[0].Envs[gpuPrefix]).To(Equal(""))
 	})
 
 	It("Should monitor health of device node", func() {
