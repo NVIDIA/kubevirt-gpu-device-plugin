@@ -315,6 +315,7 @@ func getDeviceName(deviceID string) string {
 				return deviceName
 			}
 			deviceName = strings.TrimSpace(splits[1])
+			deviceName = strings.ToUpper(deviceName)
 			reg, _ := regexp.Compile("\\s+")
 			deviceName = reg.ReplaceAllString(deviceName, "_") // Replace all spaces with underscore
 			reg, _ = regexp.Compile("[^a-zA-Z0-9_]+")
