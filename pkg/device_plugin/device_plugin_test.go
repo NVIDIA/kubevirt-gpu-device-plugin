@@ -330,7 +330,7 @@ var _ = Describe("Device Plugin", func() {
 		BeforeEach(func() {
 			workDir, err = ioutil.TempDir("", "pci-test")
 			Expect(err).ToNot(HaveOccurred())
-			message := []byte("118a  GK104GL [GRID K520] \n 118b  GK104GL [GRID K2 GeForce USM] \n 118c  GK104 [GRID 118c NVS USM]")
+			message := []byte("118a  GK104GL [GRID K520] \n 118b  GK104GL [GRID K2 GeForce USM] \n 118c  GK104 [GRID 118c NVS USM] \n 118d  gk104gl [grid k520] \n 118e gk104.gl [grid/k./520]")
 			ioutil.WriteFile(filepath.Join(workDir, "pci.ids"), message, 0644)
 		})
 
@@ -354,6 +354,18 @@ var _ = Describe("Device Plugin", func() {
 			pciIdsFilePath = filepath.Join(workDir, "fake")
 			deviceName := getDeviceName("118c")
 			Expect(deviceName).To(Equal(""))
+		})
+
+		It("Returns the device name from pci.ids in capital letters", func() {
+			pciIdsFilePath = filepath.Join(workDir, "pci.ids")
+			deviceName := getDeviceName("118d")
+			Expect(deviceName).To(Equal("GK104GL_GRID_K520"))
+		})
+
+		It("Replaces / and . with _", func() {
+			pciIdsFilePath = filepath.Join(workDir, "pci.ids")
+			deviceName := getDeviceName("118e")
+			Expect(deviceName).To(Equal("GK104_GL_GRID_K__520"))
 		})
 	})
 })
