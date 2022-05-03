@@ -1,4 +1,4 @@
-# Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2019-2022, NVIDIA CORPORATION. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -40,6 +40,18 @@ COPY . .
 RUN make build
 
 FROM nvcr.io/nvidia/${CUDA_IMAGE}:${CUDA_VERSION}-base-${BASE_DIST}
+
+ARG VERSION
+
+LABEL io.k8s.display-name="NVIDIA KubeVirt GPU Device Plugin"
+LABEL name="NVIDIA KubeVirt GPU Device Plugin"
+LABEL vendor="NVIDIA"
+LABEL version="${VERSION}"
+LABEL release="N/A"
+LABEL summary="NVIDIA device plugin for KubeVirt"
+LABEL description="See summary"
+
+COPY ./LICENSE ./licenses/LICENSE
 
 COPY --from=builder /go/src/kubevirt-gpu-device-plugin/nvidia-kubevirt-gpu-device-plugin /usr/bin/
 
