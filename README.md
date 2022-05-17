@@ -174,6 +174,14 @@ kubectl apply -f nvidia-kubevirt-gpu-device-plugin.yaml
 Examples yamls for creating VMs with GPU/vGPU are in the `examples` folder
 
 ### Build
+
+Change to proper DOCKER_REPO and DOCKER_TAG env before building images
+e.g
+```shell
+export DOCKER_REPO="quay.io/nvidia/kubevirt-gpu-device-plugin"
+export DOCKER_TAG=devel
+```
+
 Build executable binary using make
 ```shell
 make

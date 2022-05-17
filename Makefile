@@ -24,9 +24,8 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
-DOCKER_REPO="quay.io/nvidia/vfio-device-plugin"
-DOCKER_TAG="devel"
+DOCKER_REPO ?= "nvcr.io/nvidia/kubevirt-gpu-device-plugin"
+DOCKER_TAG ?= v1.1.1
 
 build:
 	go build -o nvidia-kubevirt-gpu-device-plugin kubevirt-gpu-device-plugin/cmd
