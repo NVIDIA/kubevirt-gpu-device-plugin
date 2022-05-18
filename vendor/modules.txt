@@ -1,15 +1,15 @@
 # github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20200116003318-021662a21098
 github.com/NVIDIA/gpu-monitoring-tools/bindings/go/nvml
-# github.com/fsnotify/fsnotify v1.4.7
+# github.com/fsnotify/fsnotify v1.4.9
 github.com/fsnotify/fsnotify
-# github.com/gogo/protobuf v0.0.0-20170330071051-c0656edd0d9e
+# github.com/gogo/protobuf v1.3.2 => github.com/gogo/protobuf v1.3.2
 github.com/gogo/protobuf/gogoproto
 github.com/gogo/protobuf/proto
-github.com/gogo/protobuf/sortkeys
 github.com/gogo/protobuf/protoc-gen-gogo/descriptor
+github.com/gogo/protobuf/sortkeys
 # github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
 github.com/golang/glog
-# github.com/golang/protobuf v1.2.0
+# github.com/golang/protobuf v1.5.0
 github.com/golang/protobuf/proto
 github.com/golang/protobuf/ptypes
 github.com/golang/protobuf/ptypes/any
@@ -21,103 +21,149 @@ github.com/hpcloud/tail/ratelimiter
 github.com/hpcloud/tail/util
 github.com/hpcloud/tail/watch
 github.com/hpcloud/tail/winfile
-# github.com/onsi/ginkgo v1.6.0
+# github.com/onsi/ginkgo v1.11.0
 github.com/onsi/ginkgo
 github.com/onsi/ginkgo/config
 github.com/onsi/ginkgo/internal/codelocation
+github.com/onsi/ginkgo/internal/containernode
 github.com/onsi/ginkgo/internal/failer
+github.com/onsi/ginkgo/internal/leafnodes
 github.com/onsi/ginkgo/internal/remote
+github.com/onsi/ginkgo/internal/spec
+github.com/onsi/ginkgo/internal/spec_iterator
+github.com/onsi/ginkgo/internal/specrunner
 github.com/onsi/ginkgo/internal/suite
 github.com/onsi/ginkgo/internal/testingtproxy
 github.com/onsi/ginkgo/internal/writer
 github.com/onsi/ginkgo/reporters
 github.com/onsi/ginkgo/reporters/stenographer
 github.com/onsi/ginkgo/reporters/stenographer/support/go-colorable
-github.com/onsi/ginkgo/types
-github.com/onsi/ginkgo/internal/spec_iterator
-github.com/onsi/ginkgo/internal/containernode
-github.com/onsi/ginkgo/internal/leafnodes
-github.com/onsi/ginkgo/internal/spec
-github.com/onsi/ginkgo/internal/specrunner
 github.com/onsi/ginkgo/reporters/stenographer/support/go-isatty
-# github.com/onsi/gomega v0.0.0-20181121171407-65fb64232476
+github.com/onsi/ginkgo/types
+# github.com/onsi/gomega v1.7.0
 github.com/onsi/gomega
+github.com/onsi/gomega/format
 github.com/onsi/gomega/internal/assertion
 github.com/onsi/gomega/internal/asyncassertion
+github.com/onsi/gomega/internal/oraclematcher
 github.com/onsi/gomega/internal/testingtsupport
 github.com/onsi/gomega/matchers
-github.com/onsi/gomega/types
-github.com/onsi/gomega/internal/oraclematcher
-github.com/onsi/gomega/format
 github.com/onsi/gomega/matchers/support/goraph/bipartitegraph
 github.com/onsi/gomega/matchers/support/goraph/edge
 github.com/onsi/gomega/matchers/support/goraph/node
 github.com/onsi/gomega/matchers/support/goraph/util
-# golang.org/x/net v0.0.0-20180906233101-161cd47e91fd
-golang.org/x/net/context
-golang.org/x/net/http2
-golang.org/x/net/trace
+github.com/onsi/gomega/types
+# golang.org/x/net v0.0.0-20201110031124-69a78807bb2b
+golang.org/x/net/html
+golang.org/x/net/html/atom
+golang.org/x/net/html/charset
 golang.org/x/net/http/httpguts
+golang.org/x/net/http2
 golang.org/x/net/http2/hpack
 golang.org/x/net/idna
 golang.org/x/net/internal/timeseries
-golang.org/x/net/html/charset
-golang.org/x/net/html
-golang.org/x/net/html/atom
-# golang.org/x/sys v0.0.0-20190215142949-d0b11bdaac8a
+golang.org/x/net/trace
+# golang.org/x/sys v0.0.0-20201112073958-5cba982894dd
+golang.org/x/sys/internal/unsafeheader
 golang.org/x/sys/unix
-# golang.org/x/text v0.3.0
-golang.org/x/text/secure/bidirule
-golang.org/x/text/unicode/bidi
-golang.org/x/text/unicode/norm
-golang.org/x/text/transform
+# golang.org/x/text v0.3.3
 golang.org/x/text/encoding
 golang.org/x/text/encoding/charmap
 golang.org/x/text/encoding/htmlindex
-golang.org/x/text/encoding/internal/identifier
 golang.org/x/text/encoding/internal
+golang.org/x/text/encoding/internal/identifier
 golang.org/x/text/encoding/japanese
 golang.org/x/text/encoding/korean
 golang.org/x/text/encoding/simplifiedchinese
 golang.org/x/text/encoding/traditionalchinese
 golang.org/x/text/encoding/unicode
-golang.org/x/text/language
-golang.org/x/text/internal/utf8internal
-golang.org/x/text/runes
+golang.org/x/text/internal/language
+golang.org/x/text/internal/language/compact
 golang.org/x/text/internal/tag
-# google.golang.org/genproto v0.0.0-20170731182057-09f6ed296fc6
+golang.org/x/text/internal/utf8internal
+golang.org/x/text/language
+golang.org/x/text/runes
+golang.org/x/text/secure/bidirule
+golang.org/x/text/transform
+golang.org/x/text/unicode/bidi
+golang.org/x/text/unicode/norm
+# google.golang.org/genproto v0.0.0-20191230161307-f3c370f40bfb
 google.golang.org/genproto/googleapis/rpc/status
-# google.golang.org/grpc v0.0.0-20180619221905-168a6198bcb0
+# google.golang.org/grpc v1.28.0
 google.golang.org/grpc
+google.golang.org/grpc/attributes
+google.golang.org/grpc/backoff
 google.golang.org/grpc/balancer
+google.golang.org/grpc/balancer/base
 google.golang.org/grpc/balancer/roundrobin
+google.golang.org/grpc/binarylog/grpc_binarylog_v1
 google.golang.org/grpc/codes
 google.golang.org/grpc/connectivity
 google.golang.org/grpc/credentials
+google.golang.org/grpc/credentials/internal
 google.golang.org/grpc/encoding
 google.golang.org/grpc/encoding/proto
 google.golang.org/grpc/grpclog
 google.golang.org/grpc/internal
 google.golang.org/grpc/internal/backoff
+google.golang.org/grpc/internal/balancerload
+google.golang.org/grpc/internal/binarylog
+google.golang.org/grpc/internal/buffer
 google.golang.org/grpc/internal/channelz
+google.golang.org/grpc/internal/envconfig
+google.golang.org/grpc/internal/grpclog
+google.golang.org/grpc/internal/grpcrand
+google.golang.org/grpc/internal/grpcsync
+google.golang.org/grpc/internal/grpcutil
+google.golang.org/grpc/internal/resolver/dns
+google.golang.org/grpc/internal/resolver/passthrough
+google.golang.org/grpc/internal/syscall
+google.golang.org/grpc/internal/transport
 google.golang.org/grpc/keepalive
 google.golang.org/grpc/metadata
 google.golang.org/grpc/naming
 google.golang.org/grpc/peer
 google.golang.org/grpc/resolver
-google.golang.org/grpc/resolver/dns
-google.golang.org/grpc/resolver/passthrough
+google.golang.org/grpc/serviceconfig
 google.golang.org/grpc/stats
 google.golang.org/grpc/status
 google.golang.org/grpc/tap
-google.golang.org/grpc/transport
-google.golang.org/grpc/balancer/base
-google.golang.org/grpc/internal/grpcrand
+# google.golang.org/protobuf v1.28.0 => google.golang.org/protobuf v1.28.0
+google.golang.org/protobuf/encoding/prototext
+google.golang.org/protobuf/encoding/protowire
+google.golang.org/protobuf/internal/descfmt
+google.golang.org/protobuf/internal/descopts
+google.golang.org/protobuf/internal/detrand
+google.golang.org/protobuf/internal/encoding/defval
+google.golang.org/protobuf/internal/encoding/messageset
+google.golang.org/protobuf/internal/encoding/tag
+google.golang.org/protobuf/internal/encoding/text
+google.golang.org/protobuf/internal/errors
+google.golang.org/protobuf/internal/filedesc
+google.golang.org/protobuf/internal/filetype
+google.golang.org/protobuf/internal/flags
+google.golang.org/protobuf/internal/genid
+google.golang.org/protobuf/internal/impl
+google.golang.org/protobuf/internal/order
+google.golang.org/protobuf/internal/pragma
+google.golang.org/protobuf/internal/set
+google.golang.org/protobuf/internal/strs
+google.golang.org/protobuf/internal/version
+google.golang.org/protobuf/proto
+google.golang.org/protobuf/reflect/protodesc
+google.golang.org/protobuf/reflect/protoreflect
+google.golang.org/protobuf/reflect/protoregistry
+google.golang.org/protobuf/runtime/protoiface
+google.golang.org/protobuf/runtime/protoimpl
+google.golang.org/protobuf/types/descriptorpb
+google.golang.org/protobuf/types/known/anypb
+google.golang.org/protobuf/types/known/durationpb
+google.golang.org/protobuf/types/known/timestamppb
 # gopkg.in/fsnotify.v1 v1.4.7
 gopkg.in/fsnotify.v1
 # gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7
 gopkg.in/tomb.v1
-# gopkg.in/yaml.v2 v2.2.1
+# gopkg.in/yaml.v2 v2.2.8
 gopkg.in/yaml.v2
-# k8s.io/kubernetes v0.0.0-20180627195542-91e7b4fd31fc
-k8s.io/kubernetes/pkg/kubelet/apis/deviceplugin/v1beta1
+# k8s.io/kubelet v0.19.16
+k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1
