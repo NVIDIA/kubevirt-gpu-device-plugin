@@ -37,7 +37,7 @@ import (
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/nvml"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	pluginapi "k8s.io/kubernetes/pkg/kubelet/apis/deviceplugin/v1beta1"
+	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
 func getFakeVgpuIDFromFileGeneric(basePath string, deviceAddress string, link string) (string, error) {

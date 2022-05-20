@@ -39,7 +39,7 @@ import (
 
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/nvml"
 	"google.golang.org/grpc"
-	pluginapi "k8s.io/kubernetes/pkg/kubelet/apis/deviceplugin/v1beta1"
+	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
 var returnGpuVgpuMap = getGpuVgpuMap
@@ -241,6 +241,17 @@ func (dpi *GenericVGpuDevicePlugin) GetDevicePluginOptions(ctx context.Context, 
 func (dpi *GenericVGpuDevicePlugin) PreStartContainer(ctx context.Context, in *pluginapi.PreStartContainerRequest) (*pluginapi.PreStartContainerResponse, error) {
 	res := &pluginapi.PreStartContainerResponse{}
 	return res, nil
+}
+
+// GetPreferredAllocation is for compatible with new DevicePluginServer API for DevicePlugin service. It has not been implemented in kubevrit-gpu-device-plugin
+func (dpi *GenericVGpuDevicePlugin) GetPreferredAllocation(ctx context.Context, request *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
+	// TODO
+	// returns a preferred set of devices to allocate
+	// from a list of available ones. The resulting preferred allocation is not
+	// guaranteed to be the allocation ultimately performed by the
+	// devicemanager. It is only designed to help the devicemanager make a more
+	// informed allocation decision when possible.
+	return nil, nil
 }
 
 //Health check of vGPU devices
