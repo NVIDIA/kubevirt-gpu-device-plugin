@@ -112,9 +112,9 @@ func createDevicePlugins() {
 			devicePlugins = append(devicePlugins, dp)
 		}
 	}
-	devs = nil
 	//Iterate over vGpuMap to create device plugin for each type of vGPU on the host
 	for k, v := range vGpuMap {
+		devs = nil
 		for _, dev := range v {
 			devs = append(devs, &pluginapi.Device{
 				ID:     dev.addr,
