@@ -51,7 +51,7 @@ LABEL release="N/A"
 LABEL summary="NVIDIA device plugin for KubeVirt"
 LABEL description="See summary"
 
-COPY ./LICENSE ./licenses/LICENSE
+RUN mkdir /licenses && mv /NGC-DL-CONTAINER-LICENSE /licenses/NGC-DL-CONTAINER-LICENSE
 
 COPY --from=builder /go/src/kubevirt-gpu-device-plugin/nvidia-kubevirt-gpu-device-plugin /usr/bin/
 
