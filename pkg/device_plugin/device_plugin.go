@@ -308,7 +308,7 @@ func getDeviceName(deviceID string) string {
 	for scanner.Scan() {
 		line := scanner.Text()
 		line = strings.TrimSpace(line)
-		if line != "" && strings.Contains(line, deviceID) {
+		if line != "" && !strings.HasPrefix(line, "#") && strings.Contains(line, deviceID) {
 			splits := strings.Split(line, deviceID)
 			if len(splits) != 2 {
 				log.Printf("Error processing pci.ids file at line: %s", line)
