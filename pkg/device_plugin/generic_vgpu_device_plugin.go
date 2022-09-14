@@ -98,18 +98,18 @@ func (dpi *GenericVGpuDevicePlugin) Start(stop chan struct{}) error {
 	dpi.server = grpc.NewServer([]grpc.ServerOption{}...)
 	pluginapi.RegisterDevicePluginServer(dpi.server, dpi)
 
-	err = dpi.Register()
-	if err != nil {
-		log.Printf("[%s] Error registering with device plugin manager: %v", dpi.deviceName, err)
-		return err
-	}
-
 	go dpi.server.Serve(sock)
 
 	err = waitForGrpcServer(dpi.socketPath, connectionTimeout)
 	if err != nil {
 		// this err is returned at the end of the Start function
 		log.Printf("[%s] Error connecting to GRPC server: %v", dpi.deviceName, err)
+	}
+
+	err = dpi.Register()
+	if err != nil {
+		log.Printf("[%s] Error registering with device plugin manager: %v", dpi.deviceName, err)
+		return err
 	}
 
 	go dpi.healthCheck()
