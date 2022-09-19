@@ -151,7 +151,7 @@ func startVgpuDevicePluginFunc(dp *GenericVGpuDevicePlugin) error {
 	return dp.Start(stop)
 }
 
-//Discovers all Nvidia GPUs which are loaded with VFIO-PCI driver and creates correspoding maps
+//Discovers all Nvidia GPUs which are loaded with VFIO-PCI driver and creates corresponding maps
 func createIommuDeviceMap() {
 	iommuMap = make(map[string][]NvidiaGpuDevice)
 	deviceMap = make(map[string][]string)
