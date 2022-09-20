@@ -7,14 +7,15 @@ spec:
   imagePullPolicy: IfNotPresent
   certificateRotateStrategy: {}
   configuration:
-    pciHostDevices:
-    # whitelist the permitted devices here
-    - pciVendorSelector: "10DE:1EB8"
-      resourceName: "nvidia.com/TU104GL_Tesla_T4"
-      externalResourceProvider: true
-    mediatedDevices:
-    - mdevNameSelector: "GRID T4-1Q"
-      resourceName: "nvidia.com/GRID_T4-1Q"
+    permittedHostDevices:
+       pciHostDevices:
+       # whitelist the permitted devices here
+       - pciVendorSelector: "10DE:1EB8"
+         resourceName: "nvidia.com/TU104GL_Tesla_T4"
+         externalResourceProvider: true
+       mediatedDevices:
+       - mdevNameSelector: "GRID T4-1Q"
+         resourceName: "nvidia.com/GRID_T4-1Q"
     imagePullPolicy: IfNotPresent
     developerConfiguration:
       featureGates:
