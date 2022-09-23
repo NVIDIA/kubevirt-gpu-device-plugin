@@ -59,7 +59,8 @@ type GenericDevicePlugin struct {
 	devs       []*pluginapi.Device
 	server     *grpc.Server
 	socketPath string
-	stop       chan struct{}
+	stop       chan struct{} // this channel signals to stop the DP
+	term       chan bool     // this channel detects kubelet restarts
 	healthy    chan string
 	unhealthy  chan string
 	devicePath string
@@ -74,6 +75,7 @@ func NewGenericDevicePlugin(deviceName string, devicePath string, devices []*plu
 	dpi := &GenericDevicePlugin{
 		devs:       devices,
 		socketPath: serverSock,
+		term:       make(chan bool, 1),
 		healthy:    make(chan string),
 		unhealthy:  make(chan string),
 		deviceName: deviceName,
@@ -166,10 +168,27 @@ func (dpi *GenericDevicePlugin) Stop() error {
 		return nil
 	}
 
+	// Send terminate signal to ListAndWatch()
+	dpi.term <- true
+
 	dpi.server.Stop()
 	dpi.server = nil
 
 	return dpi.cleanup()
+}
+
+// Restarts DP server
+func (dpi *GenericDevicePlugin) restart() error {
+	log.Printf("Restarting %s device plugin server", dpi.deviceName)
+	if dpi.server == nil {
+		return fmt.Errorf("grpc server instance not found for %s", dpi.deviceName)
+	}
+
+	dpi.Stop()
+
+	// Create new instance of a grpc server
+	var stop = make(chan struct{})
+	return dpi.Start(stop)
 }
 
 // Register registers the device plugin for the given resourceName with Kubelet.
@@ -218,6 +237,8 @@ func (dpi *GenericDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.Dev
 			}
 			s.Send(&pluginapi.ListAndWatchResponse{Devices: dpi.devs})
 		case <-dpi.stop:
+			return nil
+		case <-dpi.term:
 			return nil
 		}
 	}
@@ -315,32 +336,40 @@ func (dpi *GenericDevicePlugin) GetPreferredAllocation(ctx context.Context, in *
 
 //Health check of GPU devices
 func (dpi *GenericDevicePlugin) healthCheck() error {
+	method := fmt.Sprintf("healthCheck(%s)", dpi.deviceName)
+	log.Printf("%s: invoked", method)
 	var pathDeviceMap = make(map[string]string)
-	log.Printf("In health check")
 	var path = dpi.devicePath
 	var health = ""
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Printf("Unable to create fsnotify watcher: %v", err)
-		return nil
+		log.Printf("%s: Unable to create fsnotify watcher: %v", method, err)
+		return err
 	}
 	defer watcher.Close()
+
+	err = watcher.Add(filepath.Dir(dpi.socketPath))
+	if err != nil {
+		log.Printf("%s: Unable to add device plugin socket path to fsnotify watcher: %v", method, err)
+		return err
+	}
 
 	_, err = os.Stat(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("Unable to stat device: %v", err)
+			log.Printf("%s: Unable to stat device: %v", method, err)
 			return err
 		}
 	}
 
 	for _, dev := range dpi.devs {
-		log.Printf("Path %s", path)
-		log.Printf("Dev %s", dev.ID)
-		err = watcher.Add(filepath.Join(path, dev.ID))
-		pathDeviceMap[filepath.Join(path, dev.ID)] = dev.ID
+		devicePath := filepath.Join(path, dev.ID)
+		err = watcher.Add(devicePath)
+		pathDeviceMap[devicePath] = dev.ID
 		if err != nil {
-			log.Printf("Unable to add path to fsnotify watcher: %v", err)
+			log.Printf("%s: Unable to add device path to fsnotify watcher: %v", method, err)
+			return err
 		}
 	}
 
@@ -349,8 +378,6 @@ func (dpi *GenericDevicePlugin) healthCheck() error {
 		case <-dpi.stop:
 			return nil
 		case event := <-watcher.Events:
-			log.Printf("health Event Op: %v", event.Op)
-			log.Printf("health Event Name: %s", event.Name)
 			v, ok := pathDeviceMap[event.Name]
 			if ok {
 				// Health in this case is if the device path actually exists
@@ -358,9 +385,20 @@ func (dpi *GenericDevicePlugin) healthCheck() error {
 					health = v
 					dpi.healthy <- health
 				} else if (event.Op == fsnotify.Remove) || (event.Op == fsnotify.Rename) {
+					log.Printf("%s: Marking device unhealthy: %s", method, event.Name)
 					health = v
 					dpi.unhealthy <- health
 				}
+			} else if event.Name == dpi.socketPath && event.Op == fsnotify.Remove {
+				// Watcher event for removal of socket file
+				log.Printf("%s: Socket path for GPU device was removed, kubelet likely restarted", method)
+				// Trigger restart of the DP servers
+				if err := dpi.restart(); err != nil {
+					log.Printf("%s: Unable to restart server %v", method, err)
+					return err
+				}
+				log.Printf("%s: Successfully restarted %s device plugin server. Terminating.", method, dpi.deviceName)
+				return nil
 			}
 		}
 	}
