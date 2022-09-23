@@ -56,7 +56,8 @@ type GenericVGpuDevicePlugin struct {
 	devs       []*pluginapi.Device
 	server     *grpc.Server
 	socketPath string
-	stop       chan struct{}
+	stop       chan struct{} // this channel signals to stop the DP
+	term       chan bool     // this channel detects kubelet restarts
 	healthy    chan string
 	unhealthy  chan string
 	devicePath string
@@ -70,6 +71,7 @@ func NewGenericVGpuDevicePlugin(deviceName string, devicePath string, devices []
 	dpi := &GenericVGpuDevicePlugin{
 		devs:       devices,
 		socketPath: serverSock,
+		term:       make(chan bool, 1),
 		healthy:    make(chan string),
 		unhealthy:  make(chan string),
 		deviceName: deviceName,
@@ -126,6 +128,9 @@ func (dpi *GenericVGpuDevicePlugin) Stop() error {
 	if dpi.server == nil {
 		return nil
 	}
+
+	// Send terminate signal to ListAndWatch()
+	dpi.term <- true
 
 	dpi.server.Stop()
 	dpi.server = nil
@@ -193,6 +198,8 @@ func (dpi *GenericVGpuDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi
 			}
 			s.Send(&pluginapi.ListAndWatchResponse{Devices: dpi.devs})
 		case <-dpi.stop:
+			return nil
+		case <-dpi.term:
 			return nil
 		}
 	}
@@ -296,6 +303,12 @@ func (dpi *GenericVGpuDevicePlugin) healthCheck() error {
 	}
 	defer watcher.Close()
 
+	err = watcher.Add(filepath.Dir(dpi.socketPath))
+	if err != nil {
+		log.Printf("%s: Unable to add device plugin socket path to fsnotify watcher: %v", method, err)
+		return err
+	}
+
 	_, err = os.Stat(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -337,6 +350,16 @@ func (dpi *GenericVGpuDevicePlugin) healthCheck() error {
 					health = v
 					dpi.unhealthy <- health
 				}
+			} else if event.Name == dpi.socketPath && event.Op == fsnotify.Remove {
+				// Watcher event for removal of socket file
+				log.Printf("%s: Socket path for GPU device was removed, kubelet likely restarted", method)
+				// Trigger restart of the DP servers
+				if err := dpi.restart(); err != nil {
+					log.Printf("%s: Unable to restart server %v", method, err)
+					return err
+				}
+				log.Printf("%s: Successfully restarted %s device plugin server. Terminating.", method, dpi.deviceName)
+				return nil
 			}
 		}
 	}
