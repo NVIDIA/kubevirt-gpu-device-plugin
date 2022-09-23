@@ -314,6 +314,10 @@ func getDeviceName(deviceID string) string {
 				log.Printf("Error processing pci.ids file at line: %s", line)
 				return deviceName
 			}
+			// fix matching
+			if splits[0] != "" {
+				continue
+			}
 			deviceName = strings.TrimSpace(splits[1])
 			deviceName = strings.ToUpper(deviceName)
 			deviceName = strings.Replace(deviceName, "/", "_", -1)
