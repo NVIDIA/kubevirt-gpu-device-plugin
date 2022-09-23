@@ -35,9 +35,11 @@ import (
 	"net"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/nvml"
+	"github.com/fsnotify/fsnotify"
 	"google.golang.org/grpc"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
@@ -129,6 +131,20 @@ func (dpi *GenericVGpuDevicePlugin) Stop() error {
 	dpi.server = nil
 
 	return dpi.cleanup()
+}
+
+// Restarts DP server
+func (dpi *GenericVGpuDevicePlugin) restart() error {
+	log.Printf("Restarting %s device plugin server", dpi.deviceName)
+	if dpi.server == nil {
+		return fmt.Errorf("grpc server instance not found for %s", dpi.deviceName)
+	}
+
+	dpi.Stop()
+
+	// Create new instance of a grpc server
+	var stop = make(chan struct{})
+	return dpi.Start(stop)
 }
 
 // Register registers the device plugin for the given resourceName with Kubelet.
@@ -256,18 +272,48 @@ func (dpi *GenericVGpuDevicePlugin) GetPreferredAllocation(ctx context.Context, 
 
 //Health check of vGPU devices
 func (dpi *GenericVGpuDevicePlugin) healthCheck() error {
-	log.Printf("In health check")
-	log.Println("Loading NVML")
-	if err := nvmlInit(); err != nil {
-		log.Printf("Failed to initialize NVML: %s.", err)
-		return err
+	method := fmt.Sprintf("healthCheck(%s)", dpi.deviceName)
+	log.Printf("%s: invoked", method)
+	var xids chan *nvml.Device
+	var pathDeviceMap = make(map[string]string)
+	var path = dpi.devicePath
+	var health = ""
+
+	log.Printf("%s: Loading NVML", method)
+	if err := nvmlInit(); err == nil {
+		defer func() { log.Printf("%s: Shutdown of NVML returned: %v", method, nvmlShutdown()) }()
+		devs := getDevices()
+		xids = make(chan *nvml.Device)
+		go watchXIDs(devs, xids)
+	} else {
+		log.Printf("%s: Failed to initialize NVML: %s", method, err)
 	}
 
-	defer func() { log.Println("Shutdown of NVML returned:", nvmlShutdown()) }()
-	devs := getDevices()
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Printf("%s: Unable to create fsnotify watcher: %v", method, err)
+		return err
+	}
+	defer watcher.Close()
 
-	xids := make(chan *nvml.Device)
-	go watchXIDs(devs, xids)
+	_, err = os.Stat(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("%s: Unable to stat device: %v", method, err)
+			return err
+		}
+	}
+
+	for _, dev := range dpi.devs {
+		devicePath := filepath.Join(path, dev.ID)
+		log.Printf("%s: Adding watch for device path: %s", method, devicePath)
+		err = watcher.Add(devicePath)
+		pathDeviceMap[devicePath] = dev.ID
+		if err != nil {
+			log.Printf("%s: Unable to add device path to fsnotify watcher: %v", method, err)
+			return err
+		}
+	}
 
 	for {
 		select {
@@ -278,6 +324,19 @@ func (dpi *GenericVGpuDevicePlugin) healthCheck() error {
 			vGpuIDList := returnedMap[dev.PCI.BusID]
 			for _, id := range vGpuIDList {
 				dpi.unhealthy <- id
+			}
+		case event := <-watcher.Events:
+			v, ok := pathDeviceMap[event.Name]
+			if ok {
+				// Health in this case is if the device path actually exists
+				if event.Op == fsnotify.Create {
+					health = v
+					dpi.healthy <- health
+				} else if (event.Op == fsnotify.Remove) || (event.Op == fsnotify.Rename) {
+					log.Printf("%s: Marking device unhealthy: %s", method, event.Name)
+					health = v
+					dpi.unhealthy <- health
+				}
 			}
 		}
 	}
