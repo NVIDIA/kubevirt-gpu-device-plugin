@@ -141,6 +141,10 @@ func createDevicePlugins() {
 		v.Stop()
 	}
 
+	for _, v := range vGpuDevicePlugins {
+		v.Stop()
+	}
+
 }
 
 func startDevicePluginFunc(dp *GenericDevicePlugin) error {
