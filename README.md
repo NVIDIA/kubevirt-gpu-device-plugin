@@ -48,14 +48,14 @@ GRUB_TERMINAL_OUTPUT="console"
 GRUB_CMDLINE_LINUX="rd.lvm.lv=centos/root rd.lvm.lv=centos/swap rhgb quiet intel_iommu=on modprobe.blacklist=nouveau"
 GRUB_DISABLE_RECOVERY="true"
 ```
-###### Legacy Mode
+###### Legacy Mode (BIOS)
 ```shell 
 grub2-mkconfig -o /boot/grub2/grub.cfg
 reboot
 ```
 ###### UEFI Mode
 ```shell 
-grub2-mkconfig -o /boot/efi/EFI/centos/grub.cfg # Centos 7.9
+grub2-mkconfig -o /boot/efi/EFI/centos/grub.cfg
 reboot
 ```
 
