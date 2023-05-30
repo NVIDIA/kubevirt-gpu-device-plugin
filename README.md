@@ -48,10 +48,17 @@ GRUB_TERMINAL_OUTPUT="console"
 GRUB_CMDLINE_LINUX="rd.lvm.lv=centos/root rd.lvm.lv=centos/swap rhgb quiet intel_iommu=on modprobe.blacklist=nouveau"
 GRUB_DISABLE_RECOVERY="true"
 ```
-```shell
+###### Legacy Mode (BIOS)
+```shell 
 grub2-mkconfig -o /boot/grub2/grub.cfg
 reboot
 ```
+###### UEFI Mode
+```shell 
+grub2-mkconfig -o /boot/efi/EFI/centos/grub.cfg
+reboot
+```
+
 After rebooting, verify IOMMU is enabled using following command
 ```shell
 dmesg | grep -E "DMAR|IOMMU"
