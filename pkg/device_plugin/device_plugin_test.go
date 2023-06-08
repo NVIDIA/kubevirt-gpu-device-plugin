@@ -33,7 +33,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo"
@@ -227,9 +226,8 @@ var _ = Describe("Device Plugin", func() {
 
 		It("Read gpu id corresponding to Vgpu with out error", func() {
 			driverID, err := readGpuIDForVgpu(workDir, "1/driver")
-			splitStr := strings.Split(linkDir, "/")
 			Expect(err).To(BeNil())
-			Expect(driverID).To(Equal(splitStr[2]))
+			Expect(driverID).To(Equal(filepath.Base(linkDir)))
 		})
 
 		It("Read gpu id from a missing location to throw error", func() {
