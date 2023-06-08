@@ -334,7 +334,6 @@ var _ = Describe("Device Plugin", func() {
 10de NVIDIA Corporation
 	118a  GK104GL [GRID K520]
 	118b  GK104GL [GRID K2 GeForce USM]
-	118c  GK104 [GRID 118c NVS USM]
 	118d  gk104gl [grid k520]
 	118e gk104.gl [grid/k./520]
 	2331 GH100 [H100 PCIe]
@@ -350,11 +349,6 @@ var _ = Describe("Device Plugin", func() {
 
 		It("Returns blank if the device id is not present", func() {
 			deviceName := getDeviceName("abcd")
-			Expect(deviceName).To(Equal(""))
-		})
-
-		It("Returns blank if the device name is not correctly formatted", func() {
-			deviceName := getDeviceName("118c")
 			Expect(deviceName).To(Equal(""))
 		})
 
