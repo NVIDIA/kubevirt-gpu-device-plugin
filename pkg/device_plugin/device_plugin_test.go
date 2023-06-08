@@ -328,7 +328,17 @@ var _ = Describe("Device Plugin", func() {
 		BeforeEach(func() {
 			workDir, err = ioutil.TempDir("", "pci-test")
 			Expect(err).ToNot(HaveOccurred())
-			message := []byte("118a  GK104GL [GRID K520] \n 118b  GK104GL [GRID K2 GeForce USM] \n 118c  GK104 [GRID 118c NVS USM] \n 118d  gk104gl [grid k520] \n 118e gk104.gl [grid/k./520]")
+			message := []byte(`
+8086  Intel Corporation
+	2331  DH89xxCC Chap Counter
+10de NVIDIA Corporation
+	118a  GK104GL [GRID K520]
+	118b  GK104GL [GRID K2 GeForce USM]
+	118c  GK104 [GRID 118c NVS USM]
+	118d  gk104gl [grid k520]
+	118e gk104.gl [grid/k./520]
+	2331 GH100 [H100 PCIe]
+`)
 			ioutil.WriteFile(filepath.Join(workDir, "pci.ids"), message, 0644)
 		})
 
@@ -364,6 +374,12 @@ var _ = Describe("Device Plugin", func() {
 			pciIdsFilePath = filepath.Join(workDir, "pci.ids")
 			deviceName := getDeviceName("118e")
 			Expect(deviceName).To(Equal("GK104_GL_GRID_K__520"))
+		})
+
+		It("Retrieves correct device name from pci.ids file even if another vendor's device shares device id", func() {
+			pciIdsFilePath = filepath.Join(workDir, "pci.ids")
+			deviceName := getDeviceName("2331")
+			Expect(deviceName).To(Equal("GH100_H100_PCIE"))
 		})
 	})
 })
