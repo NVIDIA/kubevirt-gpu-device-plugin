@@ -30,6 +30,7 @@ package device_plugin
 
 import (
 	"bufio"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -308,30 +309,44 @@ func getDeviceName(deviceID string) string {
 	}
 	defer file.Close()
 
+	// Find beginning of NVIDIA device list
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
-		line = strings.TrimSpace(line)
-		if line != "" && strings.Contains(line, deviceID) {
-			splits := strings.Split(line, deviceID)
-			if len(splits) != 2 {
-				log.Printf("Error processing pci.ids file at line: %s", line)
-				return deviceName
-			}
-			// fix matching
-			if splits[0] != "" {
-				continue
-			}
-			deviceName = strings.TrimSpace(splits[1])
-			deviceName = strings.ToUpper(deviceName)
-			deviceName = strings.Replace(deviceName, "/", "_", -1)
-			deviceName = strings.Replace(deviceName, ".", "_", -1)
-			reg, _ := regexp.Compile("\\s+")
-			deviceName = reg.ReplaceAllString(deviceName, "_") // Replace all spaces with underscore
-			reg, _ = regexp.Compile("[^a-zA-Z0-9_.]+")
-			deviceName = reg.ReplaceAllString(deviceName, "") // Removes any char other than alphanumeric and underscore
+		if strings.HasPrefix(line, "10de") {
 			break
 		}
+	}
+
+	// Find NVIDIA device by device id
+	prefix := fmt.Sprintf("\t%s", deviceID)
+	for scanner.Scan() {
+		line := scanner.Text()
+		// ignore comments
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		// if line does not start with tab, we are visiting a different vendor
+		if !strings.HasPrefix(line, "\t") {
+			log.Printf("Could not find NVIDIA device with id: %s", deviceID)
+			return ""
+		}
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+
+		deviceName = strings.TrimPrefix(line, prefix)
+		deviceName = strings.TrimSpace(deviceName)
+		deviceName = strings.ToUpper(deviceName)
+		deviceName = strings.Replace(deviceName, "/", "_", -1)
+		deviceName = strings.Replace(deviceName, ".", "_", -1)
+		// Replace all spaces with underscore
+		reg, _ := regexp.Compile("\\s+")
+		deviceName = reg.ReplaceAllString(deviceName, "_")
+		// Removes any char other than alphanumeric and underscore
+		reg, _ = regexp.Compile("[^a-zA-Z0-9_.]+")
+		deviceName = reg.ReplaceAllString(deviceName, "")
+		break
 	}
 
 	if err := scanner.Err(); err != nil {
