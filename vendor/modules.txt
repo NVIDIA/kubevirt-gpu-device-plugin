@@ -1,4 +1,4 @@
-# github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20200116003318-021662a21098
+# github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48
 github.com/NVIDIA/gpu-monitoring-tools/bindings/go/nvml
 # github.com/fsnotify/fsnotify v1.4.9
 github.com/fsnotify/fsnotify
