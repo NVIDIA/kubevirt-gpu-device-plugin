@@ -29,21 +29,20 @@
 package device_plugin
 
 import (
-	"bufio"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/golang/glog"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
-)
 
-const (
-	nvidiaVendorID = "10de"
+	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvpci"
+	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/pciids"
 )
 
 //Structure to hold details about Nvidia GPU Device
@@ -52,10 +51,10 @@ type NvidiaGpuDevice struct {
 }
 
 //Key is iommu group id and value is a list of gpu devices part of the iommu group
-var iommuMap map[string][]NvidiaGpuDevice
+var iommuMap map[string][]*NvidiaPCIDevice
 
 //Keys are the distinct Nvidia GPU device ids present on system and value is the list of all iommu group ids which are of that device id
-var deviceMap map[string][]string
+var deviceMap map[uint16][]string
 
 //Key is vGPU Type and value is the list of Nvidia vGPUs of that type
 var vGpuMap map[string][]NvidiaGpuDevice
@@ -66,8 +65,7 @@ var gpuVgpuMap map[string][]string
 var basePath = "/sys/bus/pci/devices"
 var vGpuBasePath = "/sys/bus/mdev/devices"
 var pciIdsFilePath = "/usr/pci.ids"
-var readLink = readLinkFunc
-var readIDFromFile = readIDFromFileFunc
+
 var startDevicePlugin = startDevicePluginFunc
 var readVgpuIDFromFile = readVgpuIDFromFileFunc
 var readGpuIDForVgpu = readGpuIDForVgpuFunc
@@ -76,8 +74,9 @@ var stop = make(chan struct{})
 
 //
 func InitiateDevicePlugin() {
+	nvpci := nvpci.New()
 	//Identifies GPUs and represents it in appropriate structures
-	createIommuDeviceMap()
+	createIommuDeviceMap(nvpci)
 	//Identifies vGPUs and represents it in appropriate structures
 	createVgpuIDMap()
 	//Creates and starts device plugin
@@ -89,28 +88,28 @@ func createDevicePlugins() {
 	var devicePlugins []*GenericDevicePlugin
 	var vGpuDevicePlugins []*GenericVGpuDevicePlugin
 	var devs []*pluginapi.Device
-	log.Printf("Iommu Map %s", iommuMap)
-	log.Printf("Device Map %s", deviceMap)
+	log.Printf("Iommu Map %v", iommuMap)
+	log.Printf("Device Map %v", deviceMap)
 	log.Println("vGPU Map ", vGpuMap)
 	log.Println("GPU vGPU Map ", gpuVgpuMap)
 
 	//Iterate over deivceMap to create device plugin for each type of GPU on the host
-	for k, v := range deviceMap {
+	for deviceID, iommuIDs := range deviceMap {
 		devs = nil
-		for _, dev := range v {
+		for _, iommuID := range iommuIDs {
 			devs = append(devs, &pluginapi.Device{
-				ID:     dev,
+				ID:     iommuID,
 				Health: pluginapi.Healthy,
 			})
 		}
-		deviceName := getDeviceName(k)
-		if deviceName == "" {
-			log.Printf("Error: Could not find device name for device id: %s", k)
-			deviceName = k
+		deviceName, err := getDeviceName(deviceID)
+		if err != nil {
+			log.Printf("Error: could not find device name for device id '%x': %v", deviceID, err)
+			deviceName = strconv.Itoa(int(deviceID))
 		}
 		log.Printf("DP Name %s", deviceName)
 		dp := NewGenericDevicePlugin(deviceName, "/sys/kernel/iommu_groups/", devs)
-		err := startDevicePlugin(dp)
+		err = startDevicePlugin(dp)
 		if err != nil {
 			log.Printf("Error starting %s device plugin: %v", dp.deviceName, err)
 		} else {
@@ -118,18 +117,15 @@ func createDevicePlugins() {
 		}
 	}
 	//Iterate over vGpuMap to create device plugin for each type of vGPU on the host
-	for k, v := range vGpuMap {
+	for vgpuType, nvdevice := range vGpuMap {
 		devs = nil
-		for _, dev := range v {
+		for _, dev := range nvdevice {
 			devs = append(devs, &pluginapi.Device{
 				ID:     dev.addr,
 				Health: pluginapi.Healthy,
 			})
 		}
-		deviceName := getDeviceName(k)
-		if deviceName == "" {
-			deviceName = k
-		}
+		deviceName := vgpuType
 		log.Printf("DP Name %s", deviceName)
 		dp := NewGenericVGpuDevicePlugin(deviceName, vGpuBasePath, devs)
 		err := startVgpuDevicePlugin(dp)
@@ -161,57 +157,27 @@ func startVgpuDevicePluginFunc(dp *GenericVGpuDevicePlugin) error {
 }
 
 //Discovers all Nvidia GPUs which are loaded with VFIO-PCI driver and creates corresponding maps
-func createIommuDeviceMap() {
-	iommuMap = make(map[string][]NvidiaGpuDevice)
-	deviceMap = make(map[string][]string)
-	//Walk directory to discover pci devices
-	filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			log.Printf("Error accessing file path %q: %v\n", path, err)
-			return err
-		}
-		if info.IsDir() {
-			log.Println("Not a device, continuing")
-			return nil
-		}
-		//Retrieve vendor for the device
-		vendorID, err := readIDFromFile(basePath, info.Name(), "vendor")
-		if err != nil {
-			log.Println("Could not get vendor ID for device ", info.Name())
-			return nil
-		}
+func createIommuDeviceMap(nvpci nvpci.Interface) {
+	iommuMap = make(map[string][]*NvidiaPCIDevice)
+	deviceMap = make(map[uint16][]string)
 
-		//Nvidia vendor id is "10de". Proceed if vendor id is 10de
-		if vendorID == "10de" {
-			log.Println("Nvidia device ", info.Name())
-			//Retrieve iommu group for the device
-			driver, err := readLink(basePath, info.Name(), "driver")
-			if err != nil {
-				log.Println("Could not get driver for device ", info.Name())
-				return nil
+	devices, err := nvpci.GetAllDevices()
+	if err != nil {
+		log.Printf("Error getting NVIDIA PCI devices: %v", err)
+		os.Exit(1)
+	}
+
+	for _, dev := range devices {
+		if dev.Driver == "vfio-pci" {
+			log.Printf("Found NVIDIA device: address=%s, driver=%s, iommu_group=%d, deviceID=%x", dev.Address, dev.Driver, dev.IommuGroup, dev.Device)
+			iommuGroupStr := strconv.Itoa(dev.IommuGroup)
+			_, exists := iommuMap[iommuGroupStr]
+			if !exists {
+				deviceMap[dev.Device] = append(deviceMap[dev.Device], iommuGroupStr)
 			}
-			if driver == "vfio-pci" {
-				iommuGroup, err := readLink(basePath, info.Name(), "iommu_group")
-				if err != nil {
-					log.Println("Could not get IOMMU Group for device ", info.Name())
-					return nil
-				}
-				log.Println("Iommu Group " + iommuGroup)
-				_, exists := iommuMap[iommuGroup]
-				if !exists {
-					deviceID, err := readIDFromFile(basePath, info.Name(), "device")
-					if err != nil {
-						log.Println("Could get deviceID for PCI address ", info.Name())
-						return nil
-					}
-					log.Printf("Device Id %s", deviceID)
-					deviceMap[deviceID] = append(deviceMap[deviceID], iommuGroup)
-				}
-				iommuMap[iommuGroup] = append(iommuMap[iommuGroup], NvidiaGpuDevice{info.Name()})
-			}
+			iommuMap[iommuGroupStr] = append(iommuMap[iommuGroupStr], (*NvidiaPCIDevice)(dev))
 		}
-		return nil
-	})
+	}
 }
 
 //Discovers all Nvidia vGPUs configured on a node and creates corresponding maps
@@ -248,28 +214,6 @@ func createVgpuIDMap() {
 	})
 }
 
-//Read a file to retrieve ID
-func readIDFromFileFunc(basePath string, deviceAddress string, property string) (string, error) {
-	data, err := ioutil.ReadFile(filepath.Join(basePath, deviceAddress, property))
-	if err != nil {
-		glog.Errorf("Could not read %s for device %s: %s", property, deviceAddress, err)
-		return "", err
-	}
-	id := strings.Trim(string(data[2:]), "\n")
-	return id, nil
-}
-
-//Read a file link
-func readLinkFunc(basePath string, deviceAddress string, link string) (string, error) {
-	path, err := os.Readlink(filepath.Join(basePath, deviceAddress, link))
-	if err != nil {
-		glog.Errorf("Could not read link %s for device %s: %s", link, deviceAddress, err)
-		return "", err
-	}
-	_, file := filepath.Split(path)
-	return file, nil
-}
-
 //Read vGPU type name from the corresponding file
 func readVgpuIDFromFileFunc(basePath string, deviceAddress string, property string) (string, error) {
 	reg, _ := regexp.Compile("\\s+")
@@ -296,7 +240,7 @@ func readGpuIDForVgpuFunc(basePath string, deviceAddress string) (string, error)
 
 }
 
-func getIommuMap() map[string][]NvidiaGpuDevice {
+func getIommuMap() map[string][]*NvidiaPCIDevice {
 	return iommuMap
 }
 
@@ -304,71 +248,25 @@ func getGpuVgpuMap() map[string][]string {
 	return gpuVgpuMap
 }
 
-func getDeviceName(deviceID string) string {
-	deviceName := ""
-	file, err := os.Open(pciIdsFilePath)
+func getDeviceName(deviceID uint16) (string, error) {
+	pcidb := pciids.NewDB(
+		pciids.WithFilePath(pciIdsFilePath),
+	)
+	name, err := pcidb.GetDeviceName(0x10de, deviceID)
 	if err != nil {
-		log.Printf("Error opening pci ids file %s", pciIdsFilePath)
-		return ""
-	}
-	defer file.Close()
-
-	// Locate beginning of NVIDIA device list in pci.ids file
-	scanner, err := locateVendor(file, nvidiaVendorID)
-	if err != nil {
-		log.Printf("Error locating NVIDIA in pci.ds file: %v", err)
-		return ""
+		return "", fmt.Errorf("error getting device name in pci database: %v", err)
 	}
 
-	// Find NVIDIA device by device id
-	prefix := fmt.Sprintf("\t%s", deviceID)
-	for scanner.Scan() {
-		line := scanner.Text()
-		// ignore comments
-		if strings.HasPrefix(line, "#") {
-			continue
-		}
-		// if line does not start with tab, we are visiting a different vendor
-		if !strings.HasPrefix(line, "\t") {
-			log.Printf("Could not find NVIDIA device with id: %s", deviceID)
-			return ""
-		}
-		if !strings.HasPrefix(line, prefix) {
-			continue
-		}
+	name = strings.TrimSpace(name)
+	name = strings.ToUpper(name)
+	name = strings.Replace(name, "/", "_", -1)
+	name = strings.Replace(name, ".", "_", -1)
+	// Replace all spaces with underscore
+	reg, _ := regexp.Compile("\\s+")
+	name = reg.ReplaceAllString(name, "_")
+	// Removes any char other than alphanumeric and underscore
+	reg, _ = regexp.Compile("[^a-zA-Z0-9_.]+")
+	name = reg.ReplaceAllString(name, "")
 
-		deviceName = strings.TrimPrefix(line, prefix)
-		deviceName = strings.TrimSpace(deviceName)
-		deviceName = strings.ToUpper(deviceName)
-		deviceName = strings.Replace(deviceName, "/", "_", -1)
-		deviceName = strings.Replace(deviceName, ".", "_", -1)
-		// Replace all spaces with underscore
-		reg, _ := regexp.Compile("\\s+")
-		deviceName = reg.ReplaceAllString(deviceName, "_")
-		// Removes any char other than alphanumeric and underscore
-		reg, _ = regexp.Compile("[^a-zA-Z0-9_.]+")
-		deviceName = reg.ReplaceAllString(deviceName, "")
-		break
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Printf("Error reading pci ids file %s", err)
-	}
-	return deviceName
-}
-
-func locateVendor(pciIdsFile *os.File, vendorID string) (*bufio.Scanner, error) {
-	scanner := bufio.NewScanner(pciIdsFile)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, vendorID) {
-			return scanner, nil
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return scanner, fmt.Errorf("error reading pci.ids file: %v", err)
-	}
-
-	return scanner, fmt.Errorf("failed to find vendor id in pci.ids file: %s", vendorID)
+	return name, nil
 }

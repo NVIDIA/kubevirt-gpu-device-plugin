@@ -257,21 +257,13 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 
 			returnedMap := returnIommuMap()
 			//Retrieve the devices associated with a Iommu group
-			nvDev := returnedMap[iommuId]
+			nvDev, exists := returnedMap[iommuId]
+			if !exists {
+				continue
+			}
+
 			for _, dev := range nvDev {
-				iommuGroup, err := readLink(basePath, dev.addr, "iommu_group")
-				if err != nil || iommuGroup != iommuId {
-					log.Println("IommuGroup has changed on the system ", dev.addr)
-					return nil, fmt.Errorf("invalid allocation request: unknown device: %s", dev.addr)
-				}
-				vendorID, err := readIDFromFile(basePath, dev.addr, "vendor")
-				if err != nil || vendorID != "10de" {
-					log.Println("Vendor has changed on the system ", dev.addr)
-					return nil, fmt.Errorf("invalid allocation request: unknown device: %s", dev.addr)
-				}
-
-				devAddrs = append(devAddrs, dev.addr)
-
+				devAddrs = append(devAddrs, dev.Address)
 			}
 			deviceSpecs = append(deviceSpecs, &pluginapi.DeviceSpec{
 				HostPath:      filepath.Join(vfioDevicePath, "vfio"),
