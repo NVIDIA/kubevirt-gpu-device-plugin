@@ -28,8 +28,13 @@
 
 package device_plugin
 
-import "gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvpci"
+import (
+	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvmdev"
+	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvpci"
+)
 
 type nvpciInterface nvpci.Interface
+type nvmdevInterface nvmdev.Interface
 
 type NvidiaPCIDevice nvpci.NvidiaPCIDevice
+type NvidiaMDEVDevice nvmdev.Device

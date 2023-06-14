@@ -30,17 +30,15 @@ package device_plugin
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
-	"github.com/golang/glog"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 
+	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvmdev"
 	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvpci"
 	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/pciids"
 )
@@ -57,7 +55,7 @@ var iommuMap map[string][]*NvidiaPCIDevice
 var deviceMap map[uint16][]string
 
 //Key is vGPU Type and value is the list of Nvidia vGPUs of that type
-var vGpuMap map[string][]NvidiaGpuDevice
+var vGpuMap map[string][]*NvidiaMDEVDevice
 
 // Key is the Nvidia GPU id and value is the list of associated vGPU ids
 var gpuVgpuMap map[string][]string
@@ -67,18 +65,18 @@ var vGpuBasePath = "/sys/bus/mdev/devices"
 var pciIdsFilePath = "/usr/pci.ids"
 
 var startDevicePlugin = startDevicePluginFunc
-var readVgpuIDFromFile = readVgpuIDFromFileFunc
-var readGpuIDForVgpu = readGpuIDForVgpuFunc
+
 var startVgpuDevicePlugin = startVgpuDevicePluginFunc
 var stop = make(chan struct{})
 
 //
 func InitiateDevicePlugin() {
 	nvpci := nvpci.New()
+	nvmdev := nvmdev.New()
 	//Identifies GPUs and represents it in appropriate structures
 	createIommuDeviceMap(nvpci)
 	//Identifies vGPUs and represents it in appropriate structures
-	createVgpuIDMap()
+	createVgpuIDMap(nvmdev)
 	//Creates and starts device plugin
 	createDevicePlugins()
 }
@@ -121,7 +119,7 @@ func createDevicePlugins() {
 		devs = nil
 		for _, dev := range nvdevice {
 			devs = append(devs, &pluginapi.Device{
-				ID:     dev.addr,
+				ID:     dev.UUID,
 				Health: pluginapi.Healthy,
 			})
 		}
@@ -181,63 +179,26 @@ func createIommuDeviceMap(nvpci nvpci.Interface) {
 }
 
 //Discovers all Nvidia vGPUs configured on a node and creates corresponding maps
-func createVgpuIDMap() {
-	vGpuMap = make(map[string][]NvidiaGpuDevice)
+func createVgpuIDMap(nvmdev nvmdev.Interface) {
+	vGpuMap = make(map[string][]*NvidiaMDEVDevice)
 	gpuVgpuMap = make(map[string][]string)
-	//Walk directory to discover vGPU devices
-	filepath.Walk(vGpuBasePath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			log.Printf("Error accessing file path %q: %v\n", path, err)
-			return err
-		}
-		if info.IsDir() {
-			log.Println("Not a device, continuing")
-			return nil
-		}
-		//Read vGPU type name
-		vGpuID, err := readVgpuIDFromFile(vGpuBasePath, info.Name(), "mdev_type/name")
-		if err != nil {
-			log.Println("Could not get vGPU type identifier for device ", info.Name())
-			return nil
-		}
-		//Retrieve the gpu ID for this vGPU
-		gpuID, err := readGpuIDForVgpu(vGpuBasePath, info.Name())
-		if err != nil {
-			log.Println("Could not get vGPU type identifier for device ", info.Name())
-			return nil
-		}
-		log.Printf("Gpu id is %s", gpuID)
-		log.Printf("Vgpu id is %s", vGpuID)
-		gpuVgpuMap[gpuID] = append(gpuVgpuMap[gpuID], info.Name())
-		vGpuMap[vGpuID] = append(vGpuMap[vGpuID], NvidiaGpuDevice{info.Name()})
-		return nil
-	})
-}
 
-//Read vGPU type name from the corresponding file
-func readVgpuIDFromFileFunc(basePath string, deviceAddress string, property string) (string, error) {
-	reg, _ := regexp.Compile("\\s+")
-	data, err := ioutil.ReadFile(filepath.Join(basePath, deviceAddress, property))
+	devices, err := nvmdev.GetAllDevices()
 	if err != nil {
-		glog.Errorf("Could not read %s for device %s: %s", property, deviceAddress, err)
-		return "", err
+		// If the vGPU host driver is not installed, it is possible
+		// that /sys/bus/mdev/devices does not exist on the system.
+		// Return early but do not treat this as a critical error.
+		log.Printf("Error getting NVIDIA vGPU devices: %v", err)
+		return
 	}
-	str := strings.Trim(string(data[:]), "\n")
-	str = reg.ReplaceAllString(str, "_") // Replace all spaces with underscore
-	return str, nil
-}
 
-//Read GPU id for a specific vGPU
-func readGpuIDForVgpuFunc(basePath string, deviceAddress string) (string, error) {
-	path, err := os.Readlink(filepath.Join(basePath, deviceAddress))
-	if err != nil {
-		glog.Errorf("Could not read link for device %s: %s", deviceAddress, err)
-		return "", err
+	for _, dev := range devices {
+		gpuAddress := dev.Parent.Address
+		vgpuType := strings.ReplaceAll(dev.MDEVType, " ", "_")
+
+		gpuVgpuMap[gpuAddress] = append(gpuVgpuMap[gpuAddress], dev.UUID)
+		vGpuMap[vgpuType] = append(vGpuMap[vgpuType], (*NvidiaMDEVDevice)(dev))
 	}
-	splitStr := strings.Split(path, "/")
-	length := len(splitStr)
-	return strings.Trim(splitStr[length-2], "\n"), nil
-
 }
 
 func getIommuMap() map[string][]*NvidiaPCIDevice {
