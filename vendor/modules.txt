@@ -7,8 +7,6 @@ github.com/gogo/protobuf/gogoproto
 github.com/gogo/protobuf/proto
 github.com/gogo/protobuf/protoc-gen-gogo/descriptor
 github.com/gogo/protobuf/sortkeys
-# github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
-github.com/golang/glog
 # github.com/golang/protobuf v1.5.0
 github.com/golang/protobuf/proto
 github.com/golang/protobuf/ptypes
@@ -53,6 +51,12 @@ github.com/onsi/gomega/matchers/support/goraph/edge
 github.com/onsi/gomega/matchers/support/goraph/node
 github.com/onsi/gomega/matchers/support/goraph/util
 github.com/onsi/gomega/types
+# gitlab.com/nvidia/cloud-native/go-nvlib v0.0.0-20230613182322-7663cf900f0a
+gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvmdev
+gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvpci
+gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvpci/bytes
+gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvpci/mmio
+gitlab.com/nvidia/cloud-native/go-nvlib/pkg/pciids
 # golang.org/x/net v0.0.0-20201110031124-69a78807bb2b
 golang.org/x/net/html
 golang.org/x/net/html/atom
