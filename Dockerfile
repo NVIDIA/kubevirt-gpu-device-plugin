@@ -28,7 +28,7 @@ ARG CUDA_IMAGE=cuda
 ARG CUDA_VERSION=11.7.1
 ARG BASE_DIST=ubi8
 
-FROM golang:1.13 AS builder
+FROM golang:1.20.5 AS builder
 
 ENV GOOS=linux\
     GOARCH=amd64
