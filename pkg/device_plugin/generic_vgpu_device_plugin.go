@@ -215,12 +215,6 @@ func (dpi *GenericVGpuDevicePlugin) Allocate(ctx context.Context, reqs *pluginap
 		envList := map[string][]string{}
 
 		for _, str := range req.DevicesIDs {
-			vGpuID, err := readVgpuIDFromFile(vGpuBasePath, str, "mdev_type/name")
-			if err != nil || vGpuID != dpi.deviceName {
-				log.Println("Could not get vGPU type identifier for device ", str)
-				continue
-			}
-
 			key := fmt.Sprintf("%s_%s", vgpuPrefix, dpi.deviceName)
 			if _, exists := envList[key]; !exists {
 				envList[key] = []string{}

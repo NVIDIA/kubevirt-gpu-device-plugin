@@ -30,7 +30,6 @@ package device_plugin
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -40,16 +39,6 @@ import (
 	. "github.com/onsi/gomega"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
-
-func getFakeVgpuIDFromFileGeneric(basePath string, deviceAddress string, link string) (string, error) {
-	if deviceAddress == "1" {
-		return "foo", nil
-	} else if deviceAddress == "22" {
-		return "2", nil
-	} else {
-		return "", errors.New("Incorrect operation")
-	}
-}
 
 func fakeNvmlInit() error {
 	return nil
@@ -95,7 +84,6 @@ var _ = Describe("Generic Device", func() {
 
 		// create dummy vGPU devices
 		var devs []*pluginapi.Device
-		readVgpuIDFromFile = getFakeVgpuIDFromFile
 
 		devs = append(devs, &pluginapi.Device{
 			ID:     "1",
@@ -166,15 +154,13 @@ var _ = Describe("Generic Device", func() {
 		Expect(responses.GetContainerResponses()[0].Devices[0].HostPath).To(Equal("/dev/vfio"))
 	})
 
-	/*
-		It("Should monitor health of device node", func() {
-			go dpi.healthCheck()
-			Expect(dpi.devs[0].Health).To(Equal(pluginapi.Healthy))
-			//time.Sleep(5 * time.Second)
-			unhealthy := <-dpi.unhealthy
-			Expect(unhealthy).To(Equal("1"))
-		})
-	*/
+	It("Should monitor health of device node", func() {
+		go dpi.healthCheck()
+		Expect(dpi.devs[0].Health).To(Equal(pluginapi.Healthy))
+		//time.Sleep(5 * time.Second)
+		unhealthy := <-dpi.unhealthy
+		Expect(unhealthy).To(Equal("1"))
+	})
 
 	It("Should list devices and then react to changes in the health of the devices", func() {
 
