@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2019-2023, NVIDIA CORPORATION. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,7 +31,6 @@ package device_plugin
 import (
 	"context"
 	"errors"
-	"io/ioutil"
 	"os"
 	"path"
 	"time"
@@ -100,7 +99,7 @@ var _ = Describe("Generic Device", func() {
 		readLink = getFakeLink
 		readIDFromFile = getFakeIDFromFile
 		var devs []*pluginapi.Device
-		workDir, err = ioutil.TempDir("", "kubevirt-test")
+		workDir, err = os.MkdirTemp("", "kubevirt-test")
 		Expect(err).ToNot(HaveOccurred())
 
 		devicePath = path.Join(workDir, iommuGroup1)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2019-2023, NVIDIA CORPORATION. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,7 +30,6 @@ package device_plugin
 
 import (
 	"errors"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"time"
@@ -135,12 +134,12 @@ var _ = Describe("Device Plugin", func() {
 
 	Context("readLinkFunc() Tests", func() {
 		BeforeEach(func() {
-			linkDir, err = ioutil.TempDir("", "dp-test")
+			linkDir, err = os.MkdirTemp("", "dp-test")
 			Expect(err).ToNot(HaveOccurred())
 
 			os.Mkdir(linkDir+"/vfio-pci", 0755)
 
-			workDir, err = ioutil.TempDir("", "kubevirt-test")
+			workDir, err = os.MkdirTemp("", "kubevirt-test")
 			Expect(err).ToNot(HaveOccurred())
 
 			os.Mkdir(workDir+"/"+deviceAddress1, 0755)
@@ -166,10 +165,12 @@ var _ = Describe("Device Plugin", func() {
 
 	Context("readIDFromFileFunc() Tests", func() {
 		BeforeEach(func() {
-			workDir, err = ioutil.TempDir("", "kubevirt-test")
+			workDir, err = os.MkdirTemp("", "kubevirt-test")
 			Expect(err).ToNot(HaveOccurred())
-			os.Mkdir(workDir+"/1", 0755)
-			ioutil.WriteFile(filepath.Join(workDir, deviceAddress1, "vendor"), []byte("0x10de"), 0644)
+			err = os.Mkdir(workDir+"/1", 0755)
+			Expect(err).ToNot(HaveOccurred())
+			err = os.WriteFile(filepath.Join(workDir, deviceAddress1, "vendor"), []byte("0x10de"), 0644)
+			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("Read driver with out error", func() {
@@ -188,10 +189,12 @@ var _ = Describe("Device Plugin", func() {
 	Context("readVgpuIDFromFile() Tests", func() {
 		BeforeEach(func() {
 			readVgpuIDFromFile = readVgpuIDFromFileFunc
-			workDir, err = ioutil.TempDir("", "kubevirt-test")
+			workDir, err = os.MkdirTemp("", "kubevirt-test")
 			Expect(err).ToNot(HaveOccurred())
-			os.Mkdir(workDir+"/1", 0755)
-			ioutil.WriteFile(filepath.Join(workDir, deviceAddress1, "name"), []byte("GRID P100X-1B"), 0644)
+			err = os.Mkdir(workDir+"/1", 0755)
+			Expect(err).ToNot(HaveOccurred())
+			err = os.WriteFile(filepath.Join(workDir, deviceAddress1, "name"), []byte("GRID P100X-1B"), 0644)
+			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("Read vgpu id with out error", func() {
@@ -210,17 +213,20 @@ var _ = Describe("Device Plugin", func() {
 
 	Context("readGpuIDForVgpu() Tests", func() {
 		BeforeEach(func() {
-			linkDir, err = ioutil.TempDir("", "dp-test")
+			linkDir, err = os.MkdirTemp("", "dp-test")
 			Expect(err).ToNot(HaveOccurred())
 
-			os.Mkdir(linkDir+"/vfio-pci", 0755)
-
-			workDir, err = ioutil.TempDir("", "kubevirt-test")
+			err = os.Mkdir(linkDir+"/vfio-pci", 0755)
 			Expect(err).ToNot(HaveOccurred())
 
-			os.Mkdir(workDir+"/1", 0755)
+			workDir, err = os.MkdirTemp("", "kubevirt-test")
+			Expect(err).ToNot(HaveOccurred())
 
-			os.Symlink(linkDir+"/vfio-pci", filepath.Join(workDir, deviceAddress1, "driver"))
+			err = os.Mkdir(workDir+"/1", 0755)
+			Expect(err).ToNot(HaveOccurred())
+
+			err = os.Symlink(linkDir+"/vfio-pci", filepath.Join(workDir, deviceAddress1, "driver"))
+			Expect(err).ToNot(HaveOccurred())
 
 		})
 
@@ -241,10 +247,10 @@ var _ = Describe("Device Plugin", func() {
 	Context("createIommuDeviceMap() Tests", func() {
 
 		BeforeEach(func() {
-			linkDir, err = ioutil.TempDir("", "dp-test")
+			linkDir, err = os.MkdirTemp("", "dp-test")
 			Expect(err).ToNot(HaveOccurred())
 
-			workDir, err = ioutil.TempDir("", "kubevirt-test")
+			workDir, err = os.MkdirTemp("", "kubevirt-test")
 			Expect(err).ToNot(HaveOccurred())
 			basePath = workDir
 			os.Mkdir(filepath.Join(linkDir, deviceAddress1), 0755)
@@ -284,10 +290,10 @@ var _ = Describe("Device Plugin", func() {
 	Context("createVgpuIDMap() Tests", func() {
 
 		BeforeEach(func() {
-			linkDir, err = ioutil.TempDir("", "dp-test")
+			linkDir, err = os.MkdirTemp("", "dp-test")
 			Expect(err).ToNot(HaveOccurred())
 
-			workDir, err = ioutil.TempDir("", "kubevirt-test")
+			workDir, err = os.MkdirTemp("", "kubevirt-test")
 			Expect(err).ToNot(HaveOccurred())
 			vGpuBasePath = workDir
 			os.Mkdir(filepath.Join(linkDir, deviceAddress1), 0755)
@@ -326,7 +332,7 @@ var _ = Describe("Device Plugin", func() {
 	Context("getDeviceName() Tests", func() {
 
 		BeforeEach(func() {
-			workDir, err = ioutil.TempDir("", "pci-test")
+			workDir, err = os.MkdirTemp("", "pci-test")
 			Expect(err).ToNot(HaveOccurred())
 			message := []byte(`
 8086  Intel Corporation
@@ -338,7 +344,8 @@ var _ = Describe("Device Plugin", func() {
 	118e gk104.gl [grid/k./520]
 	2331 GH100 [H100 PCIe]
 `)
-			ioutil.WriteFile(filepath.Join(workDir, "pci.ids"), message, 0644)
+			err = os.WriteFile(filepath.Join(workDir, "pci.ids"), message, 0644)
+			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("Retrives correct device name from pci.ids file", func() {
