@@ -1,4 +1,4 @@
-# Copyright (c) 2019-2022, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2019-2023, NVIDIA CORPORATION. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -28,7 +28,7 @@ ARG CUDA_IMAGE=cuda
 ARG CUDA_VERSION=12.2.0
 ARG BASE_DIST=ubi8
 
-FROM golang:1.18 AS builder
+FROM golang:1.20 AS builder
 
 ENV GOOS=linux\
     GOARCH=amd64
@@ -54,7 +54,6 @@ LABEL description="See summary"
 RUN mkdir /licenses && mv /NGC-DL-CONTAINER-LICENSE /licenses/NGC-DL-CONTAINER-LICENSE
 
 COPY --from=builder /go/src/kubevirt-gpu-device-plugin/nvidia-kubevirt-gpu-device-plugin /usr/bin/
-
 COPY --from=builder /go/src/kubevirt-gpu-device-plugin/utils/pci.ids /usr/pci.ids
 
 RUN yum update -y
