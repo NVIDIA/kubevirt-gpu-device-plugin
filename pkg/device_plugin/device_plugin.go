@@ -37,7 +37,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/golang/glog"
+	klog "k8s.io/klog/v2"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
@@ -250,7 +250,7 @@ func createVgpuIDMap() {
 func readIDFromFileFunc(basePath string, deviceAddress string, property string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(basePath, deviceAddress, property))
 	if err != nil {
-		glog.Errorf("Could not read %s for device %s: %s", property, deviceAddress, err)
+		klog.Errorf("Could not read %s for device %s: %s", property, deviceAddress, err)
 		return "", err
 	}
 	id := strings.Trim(string(data[2:]), "\n")
@@ -261,7 +261,7 @@ func readIDFromFileFunc(basePath string, deviceAddress string, property string) 
 func readLinkFunc(basePath string, deviceAddress string, link string) (string, error) {
 	path, err := os.Readlink(filepath.Join(basePath, deviceAddress, link))
 	if err != nil {
-		glog.Errorf("Could not read link %s for device %s: %s", link, deviceAddress, err)
+		klog.Errorf("Could not read link %s for device %s: %s", link, deviceAddress, err)
 		return "", err
 	}
 	_, file := filepath.Split(path)
@@ -273,7 +273,7 @@ func readVgpuIDFromFileFunc(basePath string, deviceAddress string, property stri
 	reg := regexp.MustCompile("\\s+")
 	data, err := os.ReadFile(filepath.Join(basePath, deviceAddress, property))
 	if err != nil {
-		glog.Errorf("Could not read %s for device %s: %s", property, deviceAddress, err)
+		klog.Errorf("Could not read %s for device %s: %s", property, deviceAddress, err)
 		return "", err
 	}
 	str := strings.Trim(string(data[:]), "\n")
@@ -285,7 +285,7 @@ func readVgpuIDFromFileFunc(basePath string, deviceAddress string, property stri
 func readGpuIDForVgpuFunc(basePath string, deviceAddress string) (string, error) {
 	path, err := os.Readlink(filepath.Join(basePath, deviceAddress))
 	if err != nil {
-		glog.Errorf("Could not read link for device %s: %s", deviceAddress, err)
+		klog.Errorf("Could not read link for device %s: %s", deviceAddress, err)
 		return "", err
 	}
 	splitStr := strings.Split(path, "/")

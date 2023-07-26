@@ -5,14 +5,15 @@ go 1.18
 require (
 	github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48
 	github.com/fsnotify/fsnotify v1.4.9
-	github.com/golang/glog v1.1.0
 	github.com/onsi/ginkgo v1.11.0
 	github.com/onsi/gomega v1.7.0
 	google.golang.org/grpc v1.56.2
+	k8s.io/klog/v2 v2.100.1
 	k8s.io/kubelet v0.19.16
 )
 
 require (
+	github.com/go-logr/logr v1.2.4 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/hpcloud/tail v1.0.0 // indirect
