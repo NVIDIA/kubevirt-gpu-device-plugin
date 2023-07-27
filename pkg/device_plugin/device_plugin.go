@@ -35,6 +35,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	klog "k8s.io/klog/v2"
@@ -61,6 +62,9 @@ var vGpuMap map[string][]NvidiaGpuDevice
 
 // Key is the Nvidia GPU id and value is the list of associated vGPU ids
 var gpuVgpuMap map[string][]string
+
+// deviceNumaMap is a map of device id to NUMA node id
+var deviceNumaMap map[string]int
 
 var basePath = "/sys/bus/pci/devices"
 var vGpuBasePath = "/sys/bus/mdev/devices"
@@ -91,15 +95,25 @@ func createDevicePlugins() {
 	log.Printf("Device Map %s", deviceMap)
 	log.Println("vGPU Map ", vGpuMap)
 	log.Println("GPU vGPU Map ", gpuVgpuMap)
+	log.Println("Device NUMA Map ", deviceNumaMap)
 
 	//Iterate over deivceMap to create device plugin for each type of GPU on the host
 	for k, v := range deviceMap {
 		devs = nil
 		for _, dev := range v {
-			devs = append(devs, &pluginapi.Device{
+			device := &pluginapi.Device{
 				ID:     dev,
 				Health: pluginapi.Healthy,
-			})
+			}
+			numa, found := deviceNumaMap[dev]
+			if found {
+				device.Topology = &pluginapi.TopologyInfo{
+					Nodes: []*pluginapi.NUMANode{{ID: int64(numa)}},
+				}
+			} else {
+				log.Printf("Error: Could not find NUMA node for device id: %s", dev)
+			}
+			devs = append(devs, device)
 		}
 		deviceName := getDeviceName(k)
 		if deviceName == "" {
@@ -162,6 +176,7 @@ func startVgpuDevicePluginFunc(dp *GenericVGpuDevicePlugin) error {
 func createIommuDeviceMap() {
 	iommuMap = make(map[string][]NvidiaGpuDevice)
 	deviceMap = make(map[string][]string)
+	deviceNumaMap = make(map[string]int)
 	//Walk directory to discover pci devices
 	filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -206,6 +221,18 @@ func createIommuDeviceMap() {
 					deviceMap[deviceID] = append(deviceMap[deviceID], iommuGroup)
 				}
 				iommuMap[iommuGroup] = append(iommuMap[iommuGroup], NvidiaGpuDevice{info.Name()})
+				numaContent, err := ioutil.ReadFile(fmt.Sprintf("%s/%s/numa_node", basePath, info.Name()))
+				if err != nil {
+					log.Printf("Error reading NUMA node for device %s, err %+v", info.Name(), err)
+					return nil
+				}
+				numaInt, err := strconv.Atoi(strings.Trim(string(numaContent), " \n"))
+				if err != nil {
+					log.Printf("Error converting NUMA node for device %s, err %+v", info.Name(), err)
+					return nil
+				}
+				log.Printf("NUMA node for device %s is %d", info.Name(), numaInt)
+				deviceNumaMap[iommuGroup] = numaInt
 			}
 		}
 		return nil
