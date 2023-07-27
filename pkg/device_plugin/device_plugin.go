@@ -36,6 +36,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/golang/glog"
@@ -46,22 +47,25 @@ const (
 	nvidiaVendorID = "10de"
 )
 
-//Structure to hold details about Nvidia GPU Device
+// Structure to hold details about Nvidia GPU Device
 type NvidiaGpuDevice struct {
 	addr string // PCI address of device
 }
 
-//Key is iommu group id and value is a list of gpu devices part of the iommu group
+// Key is iommu group id and value is a list of gpu devices part of the iommu group
 var iommuMap map[string][]NvidiaGpuDevice
 
-//Keys are the distinct Nvidia GPU device ids present on system and value is the list of all iommu group ids which are of that device id
+// Keys are the distinct Nvidia GPU device ids present on system and value is the list of all iommu group ids which are of that device id
 var deviceMap map[string][]string
 
-//Key is vGPU Type and value is the list of Nvidia vGPUs of that type
+// Key is vGPU Type and value is the list of Nvidia vGPUs of that type
 var vGpuMap map[string][]NvidiaGpuDevice
 
 // Key is the Nvidia GPU id and value is the list of associated vGPU ids
 var gpuVgpuMap map[string][]string
+
+// deviceNumaMap is a map of device id to NUMA node id
+var deviceNumaMap map[string]int
 
 var basePath = "/sys/bus/pci/devices"
 var vGpuBasePath = "/sys/bus/mdev/devices"
@@ -74,7 +78,6 @@ var readGpuIDForVgpu = readGpuIDForVgpuFunc
 var startVgpuDevicePlugin = startVgpuDevicePluginFunc
 var stop = make(chan struct{})
 
-//
 func InitiateDevicePlugin() {
 	//Identifies GPUs and represents it in appropriate structures
 	createIommuDeviceMap()
@@ -84,7 +87,7 @@ func InitiateDevicePlugin() {
 	createDevicePlugins()
 }
 
-//Starts gpu pass through and vGPU device plugin
+// Starts gpu pass through and vGPU device plugin
 func createDevicePlugins() {
 	var devicePlugins []*GenericDevicePlugin
 	var vGpuDevicePlugins []*GenericVGpuDevicePlugin
@@ -93,15 +96,25 @@ func createDevicePlugins() {
 	log.Printf("Device Map %s", deviceMap)
 	log.Println("vGPU Map ", vGpuMap)
 	log.Println("GPU vGPU Map ", gpuVgpuMap)
+	log.Println("Device NUMA Map ", deviceNumaMap)
 
 	//Iterate over deivceMap to create device plugin for each type of GPU on the host
 	for k, v := range deviceMap {
 		devs = nil
 		for _, dev := range v {
-			devs = append(devs, &pluginapi.Device{
+			device := &pluginapi.Device{
 				ID:     dev,
 				Health: pluginapi.Healthy,
-			})
+			}
+			numa, found := deviceNumaMap[dev]
+			if found {
+				device.Topology = &pluginapi.TopologyInfo{
+					Nodes: []*pluginapi.NUMANode{{ID: int64(numa)}},
+				}
+			} else {
+				log.Printf("Error: Could not find NUMA node for device id: %s", dev)
+			}
+			devs = append(devs, device)
 		}
 		deviceName := getDeviceName(k)
 		if deviceName == "" {
@@ -160,10 +173,11 @@ func startVgpuDevicePluginFunc(dp *GenericVGpuDevicePlugin) error {
 	return dp.Start(stop)
 }
 
-//Discovers all Nvidia GPUs which are loaded with VFIO-PCI driver and creates corresponding maps
+// Discovers all Nvidia GPUs which are loaded with VFIO-PCI driver and creates corresponding maps
 func createIommuDeviceMap() {
 	iommuMap = make(map[string][]NvidiaGpuDevice)
 	deviceMap = make(map[string][]string)
+	deviceNumaMap = make(map[string]int)
 	//Walk directory to discover pci devices
 	filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -208,13 +222,25 @@ func createIommuDeviceMap() {
 					deviceMap[deviceID] = append(deviceMap[deviceID], iommuGroup)
 				}
 				iommuMap[iommuGroup] = append(iommuMap[iommuGroup], NvidiaGpuDevice{info.Name()})
+				numaContent, err := ioutil.ReadFile(fmt.Sprintf("%s/%s/numa_node", basePath, info.Name()))
+				if err != nil {
+					log.Printf("Error reading NUMA node for device %s, err %+v", info.Name(), err)
+					return nil
+				}
+				numaInt, err := strconv.Atoi(strings.Trim(string(numaContent), " \n"))
+				if err != nil {
+					log.Printf("Error converting NUMA node for device %s, err %+v", info.Name(), err)
+					return nil
+				}
+				log.Printf("NUMA node for device %s is %d", info.Name(), numaInt)
+				deviceNumaMap[iommuGroup] = numaInt
 			}
 		}
 		return nil
 	})
 }
 
-//Discovers all Nvidia vGPUs configured on a node and creates corresponding maps
+// Discovers all Nvidia vGPUs configured on a node and creates corresponding maps
 func createVgpuIDMap() {
 	vGpuMap = make(map[string][]NvidiaGpuDevice)
 	gpuVgpuMap = make(map[string][]string)
@@ -248,7 +274,7 @@ func createVgpuIDMap() {
 	})
 }
 
-//Read a file to retrieve ID
+// Read a file to retrieve ID
 func readIDFromFileFunc(basePath string, deviceAddress string, property string) (string, error) {
 	data, err := ioutil.ReadFile(filepath.Join(basePath, deviceAddress, property))
 	if err != nil {
@@ -259,7 +285,7 @@ func readIDFromFileFunc(basePath string, deviceAddress string, property string) 
 	return id, nil
 }
 
-//Read a file link
+// Read a file link
 func readLinkFunc(basePath string, deviceAddress string, link string) (string, error) {
 	path, err := os.Readlink(filepath.Join(basePath, deviceAddress, link))
 	if err != nil {
@@ -270,7 +296,7 @@ func readLinkFunc(basePath string, deviceAddress string, link string) (string, e
 	return file, nil
 }
 
-//Read vGPU type name from the corresponding file
+// Read vGPU type name from the corresponding file
 func readVgpuIDFromFileFunc(basePath string, deviceAddress string, property string) (string, error) {
 	reg, _ := regexp.Compile("\\s+")
 	data, err := ioutil.ReadFile(filepath.Join(basePath, deviceAddress, property))
@@ -283,7 +309,7 @@ func readVgpuIDFromFileFunc(basePath string, deviceAddress string, property stri
 	return str, nil
 }
 
-//Read GPU id for a specific vGPU
+// Read GPU id for a specific vGPU
 func readGpuIDForVgpuFunc(basePath string, deviceAddress string) (string, error) {
 	path, err := os.Readlink(filepath.Join(basePath, deviceAddress))
 	if err != nil {
