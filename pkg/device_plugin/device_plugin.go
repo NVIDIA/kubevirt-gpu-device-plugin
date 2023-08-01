@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2019-2023, NVIDIA CORPORATION. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,14 +31,13 @@ package device_plugin
 import (
 	"bufio"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
-	"github.com/golang/glog"
+	klog "k8s.io/klog/v2"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
@@ -46,18 +45,18 @@ const (
 	nvidiaVendorID = "10de"
 )
 
-//Structure to hold details about Nvidia GPU Device
+// Structure to hold details about Nvidia GPU Device
 type NvidiaGpuDevice struct {
 	addr string // PCI address of device
 }
 
-//Key is iommu group id and value is a list of gpu devices part of the iommu group
+// Key is iommu group id and value is a list of gpu devices part of the iommu group
 var iommuMap map[string][]NvidiaGpuDevice
 
-//Keys are the distinct Nvidia GPU device ids present on system and value is the list of all iommu group ids which are of that device id
+// Keys are the distinct Nvidia GPU device ids present on system and value is the list of all iommu group ids which are of that device id
 var deviceMap map[string][]string
 
-//Key is vGPU Type and value is the list of Nvidia vGPUs of that type
+// Key is vGPU Type and value is the list of Nvidia vGPUs of that type
 var vGpuMap map[string][]NvidiaGpuDevice
 
 // Key is the Nvidia GPU id and value is the list of associated vGPU ids
@@ -74,7 +73,6 @@ var readGpuIDForVgpu = readGpuIDForVgpuFunc
 var startVgpuDevicePlugin = startVgpuDevicePluginFunc
 var stop = make(chan struct{})
 
-//
 func InitiateDevicePlugin() {
 	//Identifies GPUs and represents it in appropriate structures
 	createIommuDeviceMap()
@@ -84,7 +82,7 @@ func InitiateDevicePlugin() {
 	createDevicePlugins()
 }
 
-//Starts gpu pass through and vGPU device plugin
+// Starts gpu pass through and vGPU device plugin
 func createDevicePlugins() {
 	var devicePlugins []*GenericDevicePlugin
 	var vGpuDevicePlugins []*GenericVGpuDevicePlugin
@@ -160,7 +158,7 @@ func startVgpuDevicePluginFunc(dp *GenericVGpuDevicePlugin) error {
 	return dp.Start(stop)
 }
 
-//Discovers all Nvidia GPUs which are loaded with VFIO-PCI driver and creates corresponding maps
+// Discovers all Nvidia GPUs which are loaded with VFIO-PCI driver and creates corresponding maps
 func createIommuDeviceMap() {
 	iommuMap = make(map[string][]NvidiaGpuDevice)
 	deviceMap = make(map[string][]string)
@@ -214,7 +212,7 @@ func createIommuDeviceMap() {
 	})
 }
 
-//Discovers all Nvidia vGPUs configured on a node and creates corresponding maps
+// Discovers all Nvidia vGPUs configured on a node and creates corresponding maps
 func createVgpuIDMap() {
 	vGpuMap = make(map[string][]NvidiaGpuDevice)
 	gpuVgpuMap = make(map[string][]string)
@@ -248,34 +246,34 @@ func createVgpuIDMap() {
 	})
 }
 
-//Read a file to retrieve ID
+// Read a file to retrieve ID
 func readIDFromFileFunc(basePath string, deviceAddress string, property string) (string, error) {
-	data, err := ioutil.ReadFile(filepath.Join(basePath, deviceAddress, property))
+	data, err := os.ReadFile(filepath.Join(basePath, deviceAddress, property))
 	if err != nil {
-		glog.Errorf("Could not read %s for device %s: %s", property, deviceAddress, err)
+		klog.Errorf("Could not read %s for device %s: %s", property, deviceAddress, err)
 		return "", err
 	}
 	id := strings.Trim(string(data[2:]), "\n")
 	return id, nil
 }
 
-//Read a file link
+// Read a file link
 func readLinkFunc(basePath string, deviceAddress string, link string) (string, error) {
 	path, err := os.Readlink(filepath.Join(basePath, deviceAddress, link))
 	if err != nil {
-		glog.Errorf("Could not read link %s for device %s: %s", link, deviceAddress, err)
+		klog.Errorf("Could not read link %s for device %s: %s", link, deviceAddress, err)
 		return "", err
 	}
 	_, file := filepath.Split(path)
 	return file, nil
 }
 
-//Read vGPU type name from the corresponding file
+// Read vGPU type name from the corresponding file
 func readVgpuIDFromFileFunc(basePath string, deviceAddress string, property string) (string, error) {
-	reg, _ := regexp.Compile("\\s+")
-	data, err := ioutil.ReadFile(filepath.Join(basePath, deviceAddress, property))
+	reg := regexp.MustCompile("\\s+")
+	data, err := os.ReadFile(filepath.Join(basePath, deviceAddress, property))
 	if err != nil {
-		glog.Errorf("Could not read %s for device %s: %s", property, deviceAddress, err)
+		klog.Errorf("Could not read %s for device %s: %s", property, deviceAddress, err)
 		return "", err
 	}
 	str := strings.Trim(string(data[:]), "\n")
@@ -283,11 +281,11 @@ func readVgpuIDFromFileFunc(basePath string, deviceAddress string, property stri
 	return str, nil
 }
 
-//Read GPU id for a specific vGPU
+// Read GPU id for a specific vGPU
 func readGpuIDForVgpuFunc(basePath string, deviceAddress string) (string, error) {
 	path, err := os.Readlink(filepath.Join(basePath, deviceAddress))
 	if err != nil {
-		glog.Errorf("Could not read link for device %s: %s", deviceAddress, err)
+		klog.Errorf("Could not read link for device %s: %s", deviceAddress, err)
 		return "", err
 	}
 	splitStr := strings.Split(path, "/")
