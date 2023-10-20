@@ -20,7 +20,7 @@ spec:
         operator: Exists
       containers:
       - name: nvidia-kubevirt-gpu-dp-ctr
-        image: nvcr.io/nvidia/kubevirt-gpu-device-plugin:v1.2.2
+        image: nvcr.io/nvidia/kubevirt-gpu-device-plugin:v1.2.3
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
