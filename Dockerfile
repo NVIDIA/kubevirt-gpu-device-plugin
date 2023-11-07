@@ -28,7 +28,16 @@ ARG CUDA_IMAGE=cuda
 ARG CUDA_VERSION=12.2.2
 ARG BASE_DIST=ubi8
 
-FROM golang:1.20 AS builder
+FROM nvcr.io/nvidia/${CUDA_IMAGE}:${CUDA_VERSION}-base-${BASE_DIST} as builder
+
+RUN yum install -y wget make gcc
+
+ARG GOLANG_VERSION=1.20.4
+RUN wget -nv -O - https://storage.googleapis.com/golang/go${GOLANG_VERSION}.linux-amd64.tar.gz \
+    | tar -C /usr/local -xz
+
+ENV GOPATH /go
+ENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH
 
 ENV GOOS=linux\
     GOARCH=amd64
@@ -59,4 +68,3 @@ COPY --from=builder /go/src/kubevirt-gpu-device-plugin/utils/pci.ids /usr/pci.id
 RUN yum update -y
 
 CMD ["nvidia-kubevirt-gpu-device-plugin"]
-
