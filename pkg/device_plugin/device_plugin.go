@@ -71,6 +71,7 @@ var vGpuBasePath = "/sys/bus/mdev/devices"
 var pciIdsFilePath = "/usr/pci.ids"
 var readLink = readLinkFunc
 var readIDFromFile = readIDFromFileFunc
+var readNUMAnodeIDFromFile = readNUMAnodeIDFromFileFunc
 var startDevicePlugin = startDevicePluginFunc
 var readVgpuIDFromFile = readVgpuIDFromFileFunc
 var readGpuIDForVgpu = readGpuIDForVgpuFunc
@@ -221,18 +222,15 @@ func createIommuDeviceMap() {
 					deviceMap[deviceID] = append(deviceMap[deviceID], iommuGroup)
 				}
 				iommuMap[iommuGroup] = append(iommuMap[iommuGroup], NvidiaGpuDevice{info.Name()})
-				numaContent, err := ioutil.ReadFile(fmt.Sprintf("%s/%s/numa_node", basePath, info.Name()))
+				numaID, err := readNUMAnodeIDFromFile(basePath, info.Name())
 				if err != nil {
-					log.Printf("Error reading NUMA node for device %s, err %+v", info.Name(), err)
+					log.Println("Could not get numa node id for device ", info.Name())
 					return nil
 				}
-				numaInt, err := strconv.Atoi(strings.Trim(string(numaContent), " \n"))
-				if err != nil {
-					log.Printf("Error converting NUMA node for device %s, err %+v", info.Name(), err)
-					return nil
+				if numaID != nil {
+					log.Printf("NUMA node for device %s is %d", info.Name(), *numaID)
+					deviceNumaMap[iommuGroup] = *numaID
 				}
-				log.Printf("NUMA node for device %s is %d", info.Name(), numaInt)
-				deviceNumaMap[iommuGroup] = numaInt
 			}
 		}
 		return nil
@@ -282,6 +280,20 @@ func readIDFromFileFunc(basePath string, deviceAddress string, property string) 
 	}
 	id := strings.Trim(string(data[2:]), "\n")
 	return id, nil
+}
+
+func readNUMAnodeIDFromFileFunc(basePath string, deviceAddress string) (*int, error) {
+	numaContent, err := ioutil.ReadFile(filepath.Join(basePath, deviceAddress, "numa_node"))
+	if err != nil {
+		glog.Errorf("Could not read NUMA node id for device %s, err %s", deviceAddress, err)
+		return nil, err
+	}
+	numaID, err := strconv.Atoi(strings.Trim(string(numaContent), " \n"))
+	if err != nil {
+		glog.Errorf("Could not convert to int NUMA node id for device %s, err %s", deviceAddress, err)
+		return nil, err
+	}
+	return &numaID, nil
 }
 
 // Read a file link

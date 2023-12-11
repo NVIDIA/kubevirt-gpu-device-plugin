@@ -97,6 +97,17 @@ func getFakeIDFromFileDevicePlugin(basePath string, deviceAddress string, link s
 	return "", errors.New("Incorrect operation")
 }
 
+func getFakeNUMAnodeIDFromDevicePlugin(basePath string, deviceAddress string) (*int, error) {
+	if deviceAddress == deviceAddress1 {
+		fakeNUMANodeID := 0
+		return &fakeNUMANodeID, nil
+	} else if deviceAddress == deviceAddress2 {
+		fakeNUMANodeID := 1
+		return &fakeNUMANodeID, nil
+	}
+	return nil, errors.New("Incorrect operation")
+}
+
 func fakeStartDevicePluginFunc(dp *GenericDevicePlugin) error {
 	if dp.deviceName == deviceName {
 		return errors.New("Incorrect operation")
@@ -186,6 +197,40 @@ var _ = Describe("Device Plugin", func() {
 		})
 	})
 
+	Context("readNUMAnodeIDFromFileFunc() Tests", func() {
+		BeforeEach(func() {
+			workDir, err = ioutil.TempDir("", "kubevirt-test")
+			Expect(err).ToNot(HaveOccurred())
+			os.Mkdir(workDir+"/1", 0755)
+			ioutil.WriteFile(filepath.Join(workDir, deviceAddress1, "numa_node"), []byte("0\n"), 0644)
+		})
+
+		It("Read numa node id with out error", func() {
+			nodeID, err := readNUMAnodeIDFromFileFunc(workDir, deviceAddress1)
+			Expect(err).To(BeNil())
+			Expect(nodeID).ToNot(BeNil())
+			Expect(*nodeID).To(Equal(numaNodeID))
+		})
+
+		It("Read numa node id from a missing location to throw error", func() {
+			os.Remove(filepath.Join(workDir, deviceAddress1, "numa_node"))
+
+			nodeID, err := readNUMAnodeIDFromFileFunc(workDir, deviceAddress1)
+			Expect(err).NotTo(BeNil())
+			var nilNumaNodeID *int
+			Expect(nodeID).To(Equal(nilNumaNodeID))
+		})
+
+		It("Incorrect value of numa node id to throw error", func() {
+			ioutil.WriteFile(filepath.Join(workDir, deviceAddress1, "numa_node"), []byte("incorrect\n"), 0644)
+
+			nodeID, err := readNUMAnodeIDFromFileFunc(workDir, deviceAddress1)
+			Expect(err).NotTo(BeNil())
+			var nilNumaNodeID *int
+			Expect(nodeID).To(Equal(nilNumaNodeID))
+		})
+	})
+
 	Context("readVgpuIDFromFile() Tests", func() {
 		BeforeEach(func() {
 			readVgpuIDFromFile = readVgpuIDFromFileFunc
@@ -272,6 +317,7 @@ var _ = Describe("Device Plugin", func() {
 		It("", func() {
 			readLink = getFakeLinkDevicePlugin
 			readIDFromFile = getFakeIDFromFileDevicePlugin
+			readNUMAnodeIDFromFile = getFakeNUMAnodeIDFromDevicePlugin
 			startDevicePlugin = fakeStartDevicePluginFunc
 			createIommuDeviceMap()
 
