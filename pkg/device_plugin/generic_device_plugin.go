@@ -41,6 +41,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
@@ -54,7 +55,7 @@ const (
 
 var returnIommuMap = getIommuMap
 
-//Implements the kubernetes device plugin API
+// Implements the kubernetes device plugin API
 type GenericDevicePlugin struct {
 	devs       []*pluginapi.Device
 	server     *grpc.Server
@@ -68,7 +69,7 @@ type GenericDevicePlugin struct {
 	devsHealth []*pluginapi.Device
 }
 
-//Returns an initialized instance of GenericDevicePlugin
+// Returns an initialized instance of GenericDevicePlugin
 func NewGenericDevicePlugin(deviceName string, devicePath string, devices []*pluginapi.Device) *GenericDevicePlugin {
 	log.Println("Devicename " + deviceName)
 	serverSock := fmt.Sprintf(pluginapi.DevicePluginPath+"kubevirt-%s.sock", deviceName)
@@ -103,15 +104,17 @@ func waitForGrpcServer(socketPath string, timeout time.Duration) error {
 
 // dial establishes the gRPC communication with the registered device plugin.
 func connect(socketPath string, timeout time.Duration) (*grpc.ClientConn, error) {
-	c, err := grpc.Dial(socketPath,
-		grpc.WithInsecure(),
+	ctx, _ := context.WithTimeout(context.Background(), timeout)
+	c, err := grpc.DialContext(ctx, socketPath,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
-		grpc.WithTimeout(timeout),
-		grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
-			return net.DialTimeout("unix", addr, timeout)
+		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			if deadline, ok := ctx.Deadline(); ok {
+				return net.DialTimeout("unix", addr, time.Until(deadline))
+			}
+			return net.DialTimeout("unix", addr, connectionTimeout)
 		}),
 	)
-
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +216,7 @@ func (dpi *GenericDevicePlugin) Register() error {
 	return nil
 }
 
-//ListAndWatch lists devices and update that list according to the health status
+// ListAndWatch lists devices and update that list according to the health status
 func (dpi *GenericDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin_ListAndWatchServer) error {
 
 	s.Send(&pluginapi.ListAndWatchResponse{Devices: dpi.devs})
@@ -244,7 +247,7 @@ func (dpi *GenericDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.Dev
 	}
 }
 
-//Performs pre allocation checks and allocates a devices based on the request
+// Performs pre allocation checks and allocates a devices based on the request
 func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
 	log.Println("In allocate")
 	responses := pluginapi.AllocateResponse{}
@@ -334,7 +337,7 @@ func (dpi *GenericDevicePlugin) GetPreferredAllocation(ctx context.Context, in *
 	return nil, nil
 }
 
-//Health check of GPU devices
+// Health check of GPU devices
 func (dpi *GenericDevicePlugin) healthCheck() error {
 	method := fmt.Sprintf("healthCheck(%s)", dpi.deviceName)
 	log.Printf("%s: invoked", method)
