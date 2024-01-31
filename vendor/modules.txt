@@ -210,6 +210,6 @@ k8s.io/klog/v2/internal/clock
 k8s.io/klog/v2/internal/dbg
 k8s.io/klog/v2/internal/serialize
 k8s.io/klog/v2/internal/severity
-# k8s.io/kubelet v0.21.0
-## explicit; go 1.16
+# k8s.io/kubelet v0.28.2
+## explicit; go 1.20
 k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1
