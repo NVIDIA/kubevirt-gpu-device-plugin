@@ -9,7 +9,7 @@ require (
 	github.com/onsi/gomega v1.27.10
 	google.golang.org/grpc v1.59.0
 	k8s.io/klog/v2 v2.100.1
-	k8s.io/kubelet v0.21.0
+	k8s.io/kubelet v0.28.2
 )
 
 require (
