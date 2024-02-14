@@ -28,8 +28,23 @@
 
 package main
 
-import "kubevirt-gpu-device-plugin/pkg/device_plugin"
+import (
+	"flag"
+	"log"
+
+	"kubevirt-gpu-device-plugin/pkg/device_plugin"
+)
 
 func main() {
-	device_plugin.InitiateDevicePlugin()
+	configFlag := flag.String("config", device_plugin.DefaultConfigFilePath, "path to config file")
+	flag.Parse()
+
+	config, err := device_plugin.LoadConfig(*configFlag)
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err)
+	}
+
+	log.Printf("loaded config: %+v", *config)
+
+	device_plugin.InitiateDevicePlugin(config)
 }

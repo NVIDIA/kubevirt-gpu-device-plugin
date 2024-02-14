@@ -62,11 +62,11 @@ type GenericVGpuDevicePlugin struct {
 	unhealthy  chan string
 	devicePath string
 	deviceName string
+	deviceRegisterName string
 	devsHealth []*pluginapi.Device
 }
 
-func NewGenericVGpuDevicePlugin(deviceName string, devicePath string, devices []*pluginapi.Device) *GenericVGpuDevicePlugin {
-	log.Println("Devicename " + deviceName)
+func NewGenericVGpuDevicePlugin(deviceName string, devicePath string, devices []*pluginapi.Device, config *Config) *GenericVGpuDevicePlugin {
 	serverSock := fmt.Sprintf(pluginapi.DevicePluginPath+"kubevirt-%s.sock", deviceName)
 	dpi := &GenericVGpuDevicePlugin{
 		devs:       devices,
@@ -76,7 +76,17 @@ func NewGenericVGpuDevicePlugin(deviceName string, devicePath string, devices []
 		unhealthy:  make(chan string),
 		deviceName: deviceName,
 		devicePath: devicePath,
+		deviceRegisterName: deviceName,
 	}
+
+	for _, aliasEntry := range config.GPUAliases {
+		if deviceName == aliasEntry.GPUName {
+			dpi.deviceRegisterName = aliasEntry.Alias
+		}
+	}
+
+	log.Printf("device %s will be registered using name %s", deviceName, dpi.deviceRegisterName)
+
 	return dpi
 }
 
@@ -164,7 +174,7 @@ func (dpi *GenericVGpuDevicePlugin) Register() error {
 	reqt := &pluginapi.RegisterRequest{
 		Version:      pluginapi.Version,
 		Endpoint:     path.Base(dpi.socketPath),
-		ResourceName: fmt.Sprintf("%s/%s", DeviceNamespace, dpi.deviceName),
+		ResourceName: fmt.Sprintf("%s/%s", DeviceNamespace, dpi.deviceRegisterName),
 	}
 
 	_, err = client.Register(context.Background(), reqt)
@@ -221,7 +231,7 @@ func (dpi *GenericVGpuDevicePlugin) Allocate(ctx context.Context, reqs *pluginap
 				continue
 			}
 
-			key := fmt.Sprintf("%s_%s", vgpuPrefix, dpi.deviceName)
+			key := fmt.Sprintf("%s_%s", vgpuPrefix, dpi.deviceRegisterName)
 			if _, exists := envList[key]; !exists {
 				envList[key] = []string{}
 			}
