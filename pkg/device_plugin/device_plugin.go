@@ -73,17 +73,17 @@ var readGpuIDForVgpu = readGpuIDForVgpuFunc
 var startVgpuDevicePlugin = startVgpuDevicePluginFunc
 var stop = make(chan struct{})
 
-func InitiateDevicePlugin() {
+func InitiateDevicePlugin(config *Config) {
 	//Identifies GPUs and represents it in appropriate structures
 	createIommuDeviceMap()
 	//Identifies vGPUs and represents it in appropriate structures
 	createVgpuIDMap()
 	//Creates and starts device plugin
-	createDevicePlugins()
+	createDevicePlugins(config)
 }
 
 // Starts gpu pass through and vGPU device plugin
-func createDevicePlugins() {
+func createDevicePlugins(config *Config) {
 	var devicePlugins []*GenericDevicePlugin
 	var vGpuDevicePlugins []*GenericVGpuDevicePlugin
 	var devs []*pluginapi.Device
@@ -107,7 +107,7 @@ func createDevicePlugins() {
 			deviceName = k
 		}
 		log.Printf("DP Name %s", deviceName)
-		dp := NewGenericDevicePlugin(deviceName, "/dev/vfio/", devs)
+		dp := NewGenericDevicePlugin(deviceName, "/dev/vfio/", devs, config)
 		err := startDevicePlugin(dp)
 		if err != nil {
 			log.Printf("Error starting %s device plugin: %v", dp.deviceName, err)
@@ -129,7 +129,7 @@ func createDevicePlugins() {
 			deviceName = k
 		}
 		log.Printf("DP Name %s", deviceName)
-		dp := NewGenericVGpuDevicePlugin(deviceName, vGpuBasePath, devs)
+		dp := NewGenericVGpuDevicePlugin(deviceName, vGpuBasePath, devs, config)
 		err := startVgpuDevicePlugin(dp)
 		if err != nil {
 			log.Printf("Error starting %s device plugin: %v", dp.deviceName, err)

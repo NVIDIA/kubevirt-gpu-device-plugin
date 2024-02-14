@@ -120,7 +120,7 @@ var _ = Describe("Generic Device", func() {
 			ID:     iommuGroup2,
 			Health: pluginapi.Healthy,
 		})
-		dpi = NewGenericDevicePlugin("foo", workDir+"/", devs)
+		dpi = NewGenericDevicePlugin("foo", workDir+"/", devs, &Config{})
 		stop = make(chan struct{})
 		dpi.stop = stop
 
