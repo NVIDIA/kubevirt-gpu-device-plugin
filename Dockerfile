@@ -25,14 +25,14 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ARG CUDA_IMAGE=cuda
-ARG CUDA_VERSION=12.3.0
+ARG CUDA_VERSION=12.3.2
 ARG BASE_DIST=ubi8
 
 FROM nvcr.io/nvidia/${CUDA_IMAGE}:${CUDA_VERSION}-base-${BASE_DIST} as builder
 
 RUN yum install -y wget make gcc
 
-ARG GOLANG_VERSION=1.20.4
+ARG GOLANG_VERSION=1.21.8
 RUN wget -nv -O - https://storage.googleapis.com/golang/go${GOLANG_VERSION}.linux-amd64.tar.gz \
     | tar -C /usr/local -xz
 
