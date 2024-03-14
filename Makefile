@@ -25,7 +25,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 DOCKER_REPO ?= "nvcr.io/nvidia/kubevirt-gpu-device-plugin"
-DOCKER_TAG ?= v1.2.4
+DOCKER_TAG ?= v1.2.6
 
 build:
 	go build -o nvidia-kubevirt-gpu-device-plugin kubevirt-gpu-device-plugin/cmd
