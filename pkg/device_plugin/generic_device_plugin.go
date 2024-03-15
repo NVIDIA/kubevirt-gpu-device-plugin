@@ -57,31 +57,42 @@ var returnIommuMap = getIommuMap
 
 // Implements the kubernetes device plugin API
 type GenericDevicePlugin struct {
-	devs       []*pluginapi.Device
-	server     *grpc.Server
-	socketPath string
-	stop       chan struct{} // this channel signals to stop the DP
-	term       chan bool     // this channel detects kubelet restarts
-	healthy    chan string
-	unhealthy  chan string
-	devicePath string
-	deviceName string
-	devsHealth []*pluginapi.Device
+	devs               []*pluginapi.Device
+	server             *grpc.Server
+	socketPath         string
+	stop               chan struct{} // this channel signals to stop the DP
+	term               chan bool     // this channel detects kubelet restarts
+	healthy            chan string
+	unhealthy          chan string
+	devicePath         string
+	deviceName         string
+	deviceRegisterName string
+	devsHealth         []*pluginapi.Device
 }
 
 // Returns an initialized instance of GenericDevicePlugin
-func NewGenericDevicePlugin(deviceName string, devicePath string, devices []*pluginapi.Device) *GenericDevicePlugin {
-	log.Println("Devicename " + deviceName)
+func NewGenericDevicePlugin(deviceName string, devicePath string, devices []*pluginapi.Device, config *Config) *GenericDevicePlugin {
 	serverSock := fmt.Sprintf(pluginapi.DevicePluginPath+"kubevirt-%s.sock", deviceName)
+
 	dpi := &GenericDevicePlugin{
-		devs:       devices,
-		socketPath: serverSock,
-		term:       make(chan bool, 1),
-		healthy:    make(chan string),
-		unhealthy:  make(chan string),
-		deviceName: deviceName,
-		devicePath: devicePath,
+		devs:               devices,
+		socketPath:         serverSock,
+		term:               make(chan bool, 1),
+		healthy:            make(chan string),
+		unhealthy:          make(chan string),
+		deviceName:         deviceName,
+		devicePath:         devicePath,
+		deviceRegisterName: deviceName,
 	}
+
+	for _, aliasEntry := range config.GPUAliases {
+		if deviceName == aliasEntry.GPUName {
+			dpi.deviceRegisterName = aliasEntry.Alias
+		}
+	}
+
+	log.Printf("device %s will be registered using name %s", deviceName, dpi.deviceRegisterName)
+
 	return dpi
 }
 
@@ -206,7 +217,7 @@ func (dpi *GenericDevicePlugin) Register() error {
 	reqt := &pluginapi.RegisterRequest{
 		Version:      pluginapi.Version,
 		Endpoint:     path.Base(dpi.socketPath),
-		ResourceName: fmt.Sprintf("%s/%s", DeviceNamespace, dpi.deviceName),
+		ResourceName: fmt.Sprintf("%s/%s", DeviceNamespace, dpi.deviceRegisterName),
 	}
 
 	_, err = client.Register(context.Background(), reqt)
@@ -287,7 +298,7 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 				Permissions:   "mrw",
 			})
 
-			key := fmt.Sprintf("%s_%s", gpuPrefix, dpi.deviceName)
+			key := fmt.Sprintf("%s_%s", gpuPrefix, dpi.deviceRegisterName)
 			if _, exists := envList[key]; !exists {
 				envList[key] = []string{}
 			}

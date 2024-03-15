@@ -199,6 +199,9 @@ google.golang.org/protobuf/types/descriptorpb
 google.golang.org/protobuf/types/known/anypb
 google.golang.org/protobuf/types/known/durationpb
 google.golang.org/protobuf/types/known/timestamppb
+# gopkg.in/yaml.v2 v2.4.0
+## explicit; go 1.15
+gopkg.in/yaml.v2
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
@@ -213,3 +216,6 @@ k8s.io/klog/v2/internal/severity
 # k8s.io/kubelet v0.28.2
 ## explicit; go 1.20
 k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1
+# sigs.k8s.io/yaml v1.3.0
+## explicit; go 1.12
+sigs.k8s.io/yaml

@@ -120,7 +120,7 @@ var _ = Describe("Generic Device", func() {
 		err = os.WriteFile(socketPath, []byte{}, 0755)
 		Expect(err).To(BeNil())
 
-		dpi = NewGenericVGpuDevicePlugin("vGPUId", workDir+"/", devs)
+		dpi = NewGenericVGpuDevicePlugin("vGPUId", workDir+"/", devs, &Config{})
 		stop = make(chan struct{})
 		dpi.socketPath = socketPath
 		dpi.stop = stop
