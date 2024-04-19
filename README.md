@@ -1,4 +1,4 @@
-# NVIDIA K8s Device Plugin to assign GPUs and vGPUs to Kubevirt VMs
+# NVIDIA K8s Device Plugin to assign GPUs and vGPUs to KubeVirt VMs
 
 > Starting from v1.1.0, we will only be supporting KubeVirt v0.36.0 or newer. Please use v1.0.1 for compatibility with older KubeVirt versions.
 
@@ -10,26 +10,26 @@
 - [Docs](#docs)
 
 ## About
-This is a kubernetes device plugin that can discover and expose GPUs and vGPUs on a kubernetes node. This device plugin will enable to launch GPU attached [Kubevirt](https://github.com/kubevirt/kubevirt/blob/master/README.md) VMs in your kubernetes cluster. Its specifically developed to serve Kubevirt workloads in a Kubernetes cluster.
+This is a kubernetes device plugin that can discover and expose GPUs and vGPUs on a kubernetes node. This device plugin will enable to launch GPU attached [KubeVirt](https://github.com/kubevirt/kubevirt/blob/master/README.md) VMs in your kubernetes cluster. Its specifically developed to serve KubeVirt workloads in a Kubernetes cluster.
 
 
 ## Features
 - Discovers Nvidia GPUs which are bound to VFIO-PCI driver and exposes them as devices available to be attached to VM in pass through mode.
-- Discovers Nvidia vGPUs configured on a kubernetes node and exposes them to be attached to Kubevirt VMs
+- Discovers Nvidia vGPUs configured on a kubernetes node and exposes them to be attached to KubeVirt VMs
 - Performs basic health check on the GPU on a kubernetes node.
 
 ## Prerequisites
-- Need to have Nvidia GPU configured for GPU pass thorugh or vGPU. Quickstart section provides details about this
+- Need to have Nvidia GPU configured for GPU passthrough or vGPU. Quickstart section provides details about this
 - Kubernetes version >= v1.11
-- Kubevirt release >= v0.36.0
-- Kubevirt GPU feature gate should be enabled and permitted devices should be whitelisted. Feature gate is enabled by creating a ConfigMap. ConfigMap yaml can be found under `/examples`.
+- KubeVirt release >= v0.36.0
+- KubeVirt GPU feature gate should be enabled and permitted devices should be whitelisted. Feature gate is enabled by creating a ConfigMap. ConfigMap yaml can be found under `/examples`.
 
 ## Quick Start
 
 Before starting the device plug, the GPUs on a kubernetes node need to configured to be in GPU pass through mode or vGPU mode
 
 ### Whitelist GPU and vGPU in KubeVirt CR
-GPUs and vGPUs should be whitelisted in KubeVirt CR following the instructions outlined [here](https://kubevirt.io/user-guide/virtual_machines/host-devices/#listing-permitted-devices). An example KubeVirt CR can be found under `/examples`.
+GPUs and vGPUs should be allowlisted in the KubeVirt CR following the instructions outlined [here](https://kubevirt.io/user-guide/virtual_machines/host-devices/#listing-permitted-devices). An example KubeVirt CR can be found under `/examples`.
 
 ### Preparing a GPU to be used in pass through mode
 GPU needs to be loaded with VFIO-PCI driver to be used in pass through mode
@@ -89,7 +89,7 @@ Considering vendor-ID is 10de and device-ID is 1b38 command will be as follows
 ```shell
 echo "options vfio-pci ids=10de:1b38" > /etc/modprobe.d/vfio.conf
 ```
-**Update config to load VFIO-PCI module after reboo**t
+**Update config to load VFIO-PCI module after reboot**
 ```shell
 echo 'vfio-pci' > /etc/modules-load.d/vfio-pci.conf
 reboot
@@ -148,7 +148,7 @@ $ cat nvidia-41/available_instances
 $ uuidgen
 aa618089-8b16-4d01-a136-25a0f3c73123
 ```
-##### 5. Write the UUID that you obtained in the previous step to the create file in the registration information directory for the vGPU type that you want to create.
+##### 5. Write the UUID that you obtained in the previous step to create the file in the registration information directory for the vGPU type that you want to create.
 ```shell
 $ echo "uuid"> subdirectory/create
 ```
@@ -160,7 +160,7 @@ This example creates an instance of the M10-2Q vGPU type with the UUID aa618089-
 ```shell
 $ echo "aa618089-8b16-4d01-a136-25a0f3c73123" > nvidia-41/create
 ```
-An mdev device file for the vGPU is added is added to the parent physical device directory of the vGPU. The vGPU is identified by its UUID.
+An mdev device file for the vGPU is added to the parent physical device directory of the vGPU. The vGPU is identified by its UUID.
 
 The /sys/bus/mdev/devices/ directory contains a symbolic link to the mdev device file.
 
@@ -178,12 +178,12 @@ The daemon set creation yaml can be used to deploy the device plugin.
 kubectl apply -f nvidia-kubevirt-gpu-device-plugin.yaml
 ```
 
-Examples yamls for creating VMs with GPU/vGPU are in the `examples` folder
+Example YAMLs for creating VMs with GPU/vGPU are in the `examples` folder
 
 ### Build
 
 Change to proper DOCKER_REPO and DOCKER_TAG env before building images
-e.g
+e.g.
 ```shell
 export DOCKER_REPO="quay.io/nvidia/kubevirt-gpu-device-plugin"
 export DOCKER_TAG=devel
@@ -203,5 +203,5 @@ make push-image DOCKER_REPO=<docker-repo-url> DOCKER_TAG=<image-tag>
 ```
 ### To Do
 - Improve the healthcheck mechanism for GPUs with VFIO-PCI drivers
-- Support GetPreferredAllocation API of DevicePluginServer. It returns a preferred set of devices to allocate from a list of available ones. The resulting preferred allocation is not guaranteed to be the allocation ultimately performed by the devicemanager. It is only designed to help the devicemanager make a more informed allocation decision when possible. It has not been implemented in kubevrit-gpu-device-plugin.
+- Support GetPreferredAllocation API of DevicePluginServer. It returns a preferred set of devices to allocate from a list of available ones. The resulting preferred allocation is not guaranteed to be the allocation ultimately performed by the devicemanager. It is only designed to help the devicemanager make a more informed allocation decision when possible. It has not been implemented in kubevirt-gpu-device-plugin.
 --------------------------------------------------------------
