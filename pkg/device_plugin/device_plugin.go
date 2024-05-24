@@ -107,7 +107,7 @@ func createDevicePlugins() {
 			deviceName = k
 		}
 		log.Printf("DP Name %s", deviceName)
-		dp := NewGenericDevicePlugin(deviceName, "/sys/kernel/iommu_groups/", devs)
+		dp := NewGenericDevicePlugin(deviceName, "/dev/vfio/", devs)
 		err := startDevicePlugin(dp)
 		if err != nil {
 			log.Printf("Error starting %s device plugin: %v", dp.deviceName, err)

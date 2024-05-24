@@ -28,9 +28,14 @@ spec:
         volumeMounts:
           - name: device-plugin
             mountPath: /var/lib/kubelet/device-plugins
+          - name: vfio
+            mountPath: /dev/vfio
       imagePullSecrets:
       - name: regcred
       volumes:
         - name: device-plugin
           hostPath:
             path: /var/lib/kubelet/device-plugins
+        - name: vfio
+          hostPath:
+            path: /dev/vfio
