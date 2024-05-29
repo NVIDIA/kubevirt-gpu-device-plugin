@@ -369,6 +369,7 @@ func (dpi *GenericDevicePlugin) healthCheck() error {
 	for _, dev := range dpi.devs {
 		devicePath := filepath.Join(path, dev.ID)
 		err = watcher.Add(devicePath)
+		log.Printf(" Adding Watcher to Path : %v", devicePath)
 		pathDeviceMap[devicePath] = dev.ID
 		if err != nil {
 			log.Printf("%s: Unable to add device path to fsnotify watcher: %v", method, err)
