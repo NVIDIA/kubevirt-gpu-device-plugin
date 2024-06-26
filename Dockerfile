@@ -32,7 +32,7 @@ FROM nvcr.io/nvidia/${CUDA_IMAGE}:${CUDA_VERSION}-base-${BASE_DIST} as builder
 
 RUN yum install -y wget make gcc
 
-ARG GOLANG_VERSION=1.22.2
+ARG GOLANG_VERSION=1.22.4
 RUN wget -nv -O - https://storage.googleapis.com/golang/go${GOLANG_VERSION}.linux-amd64.tar.gz \
     | tar -C /usr/local -xz
 
