@@ -24,11 +24,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-ARG CUDA_IMAGE=cuda
-ARG CUDA_VERSION=12.5.0
-ARG BASE_DIST=ubi8
-
-FROM nvcr.io/nvidia/${CUDA_IMAGE}:${CUDA_VERSION}-base-${BASE_DIST} as builder
+FROM nvcr.io/nvidia/cuda:12.5.0-base-ubi8 as builder
 
 RUN yum install -y wget make gcc
 
@@ -48,7 +44,7 @@ COPY . .
 
 RUN make build
 
-FROM nvcr.io/nvidia/${CUDA_IMAGE}:${CUDA_VERSION}-base-${BASE_DIST}
+FROM nvcr.io/nvidia/cuda:12.5.0-base-ubi8
 
 ARG VERSION
 
