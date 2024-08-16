@@ -30,8 +30,6 @@ spec:
             mountPath: /var/lib/kubelet/device-plugins
           - name: vfio
             mountPath: /dev/vfio
-      imagePullSecrets:
-      - name: regcred
       volumes:
         - name: device-plugin
           hostPath:
