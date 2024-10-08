@@ -48,7 +48,7 @@ COPY . .
 
 RUN make build
 
-FROM nvcr.io/nvidia/${CUDA_IMAGE}:${CUDA_VERSION}-base-${BASE_DIST}
+FROM nvcr.io/nvidia/cuda:12.5.0-base-ubi8
 
 ARG VERSION
 
