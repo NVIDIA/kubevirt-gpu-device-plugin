@@ -25,7 +25,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ARG CUDA_IMAGE=cuda
-ARG CUDA_VERSION=12.6.1
+ARG CUDA_VERSION=12.6.2
 ARG BASE_DIST=ubi9
 
 FROM nvcr.io/nvidia/${CUDA_IMAGE}:${CUDA_VERSION}-base-${BASE_DIST} as builder
@@ -48,7 +48,7 @@ COPY . .
 
 RUN make build
 
-FROM nvcr.io/nvidia/cuda:12.6.1-base-ubi9
+FROM nvcr.io/nvidia/${CUDA_IMAGE}:${CUDA_VERSION}-base-${BASE_DIST}
 
 ARG VERSION
 
