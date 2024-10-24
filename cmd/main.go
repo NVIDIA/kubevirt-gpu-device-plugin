@@ -28,8 +28,13 @@
 
 package main
 
-import "kubevirt-gpu-device-plugin/pkg/device_plugin"
+import (
+	"kubevirt-gpu-device-plugin/pkg/device_plugin"
+	"os"
+)
 
 func main() {
+	device_plugin.PGPUAlias = os.Getenv("P_GPU_ALIAS")
+	device_plugin.VGPUAlias = os.Getenv("V_GPU_ALIAS")
 	device_plugin.InitiateDevicePlugin()
 }
