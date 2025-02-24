@@ -11,7 +11,7 @@ require (
 	github.com/onsi/gomega v1.36.2
 	google.golang.org/grpc v1.70.0
 	k8s.io/klog/v2 v2.130.1
-	k8s.io/kubelet v0.32.1
+	k8s.io/kubelet v0.32.2
 )
 
 require (

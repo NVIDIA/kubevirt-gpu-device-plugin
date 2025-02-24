@@ -25,7 +25,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 DOCKER_REPO ?= "nvcr.io/nvidia/kubevirt-gpu-device-plugin"
-DOCKER_TAG ?= v1.3.0
+DOCKER_TAG ?= v1.3.1
 
 PCI_IDS_URL ?= https://pci-ids.ucw.cz/v2.2/pci.ids
 
