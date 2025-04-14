@@ -287,7 +287,7 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 				Permissions:   "mrw",
 			})
 
-			key := fmt.Sprintf("%s_%s", gpuPrefix, dpi.deviceName)
+			key := fmt.Sprintf("%s_%s", gpuPrefix, strings.ToUpper(dpi.deviceName))
 			if _, exists := envList[key]; !exists {
 				envList[key] = []string{}
 			}

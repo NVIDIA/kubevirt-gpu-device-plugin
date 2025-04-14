@@ -51,7 +51,7 @@ var nvmlGetDeviceCount = nvml.GetDeviceCount
 var nvmlNewDeviceLite = nvml.NewDeviceLite
 var nvmlShutdown = nvml.Shutdown
 
-//Implements the kubernetes device plugin API
+// Implements the kubernetes device plugin API
 type GenericVGpuDevicePlugin struct {
 	devs       []*pluginapi.Device
 	server     *grpc.Server
@@ -174,7 +174,7 @@ func (dpi *GenericVGpuDevicePlugin) Register() error {
 	return nil
 }
 
-//ListAndWatch lists devices and update that list according to the health status
+// ListAndWatch lists devices and update that list according to the health status
 func (dpi *GenericVGpuDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin_ListAndWatchServer) error {
 
 	s.Send(&pluginapi.ListAndWatchResponse{Devices: dpi.devs})
@@ -205,7 +205,7 @@ func (dpi *GenericVGpuDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi
 	}
 }
 
-//Performs pre allocation checks and allocates a devices based on the request
+// Performs pre allocation checks and allocates a devices based on the request
 func (dpi *GenericVGpuDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
 	log.Println("In allocate")
 	responses := pluginapi.AllocateResponse{}
@@ -221,7 +221,7 @@ func (dpi *GenericVGpuDevicePlugin) Allocate(ctx context.Context, reqs *pluginap
 				continue
 			}
 
-			key := fmt.Sprintf("%s_%s", vgpuPrefix, dpi.deviceName)
+			key := fmt.Sprintf("%s_%s", vgpuPrefix, strings.ToUpper(dpi.deviceName))
 			if _, exists := envList[key]; !exists {
 				envList[key] = []string{}
 			}
@@ -277,7 +277,7 @@ func (dpi *GenericVGpuDevicePlugin) GetPreferredAllocation(ctx context.Context, 
 	return nil, nil
 }
 
-//Health check of vGPU devices
+// Health check of vGPU devices
 func (dpi *GenericVGpuDevicePlugin) healthCheck() error {
 	method := fmt.Sprintf("healthCheck(%s)", dpi.deviceName)
 	log.Printf("%s: invoked", method)
