@@ -30,7 +30,9 @@ package device_plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"os"
@@ -49,6 +51,7 @@ const (
 	DeviceNamespace   = "nvidia.com"
 	connectionTimeout = 5 * time.Second
 	vfioDevicePath    = "/dev/vfio"
+	iommuDevicePath   = "/dev/iommu"
 	gpuPrefix         = "PCI_RESOURCE_NVIDIA_COM"
 	vgpuPrefix        = "MDEV_PCI_RESOURCE_NVIDIA_COM"
 )
@@ -252,7 +255,10 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 	log.Println("In allocate")
 	responses := pluginapi.AllocateResponse{}
 	envList := map[string][]string{}
-
+	iommufdSupported, err := supportsIOMMUFD()
+	if err != nil {
+		return nil, fmt.Errorf("could not determine iommufd support: %w", err)
+	}
 	for _, req := range reqs.ContainerRequests {
 		deviceSpecs := make([]*pluginapi.DeviceSpec, 0)
 		for _, iommuId := range req.DevicesIDs {
@@ -274,7 +280,17 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 				}
 
 				devAddrs = append(devAddrs, dev.addr)
-
+				if iommufdSupported {
+					vfiodev, err := readVFIODev(basePath, dev.addr)
+					if err != nil {
+						return nil, fmt.Errorf("could not determine iommufd device for device %s: %v", dev.addr, err)
+					}
+					deviceSpecs = append(deviceSpecs, &pluginapi.DeviceSpec{
+						HostPath:      filepath.Join(vfioDevicePath, "devices", vfiodev),
+						ContainerPath: filepath.Join(vfioDevicePath, "devices", vfiodev),
+						Permissions:   "mrw",
+					})
+				}
 			}
 			deviceSpecs = append(deviceSpecs, &pluginapi.DeviceSpec{
 				HostPath:      filepath.Join(vfioDevicePath, "vfio"),
@@ -286,6 +302,13 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 				ContainerPath: filepath.Join(vfioDevicePath, iommuId),
 				Permissions:   "mrw",
 			})
+			if iommufdSupported {
+				deviceSpecs = append(deviceSpecs, &pluginapi.DeviceSpec{
+					HostPath:      iommuDevicePath,
+					ContainerPath: iommuDevicePath,
+					Permissions:   "mrw",
+				})
+			}
 
 			key := fmt.Sprintf("%s_%s", gpuPrefix, strings.ToUpper(dpi.deviceName))
 			if _, exists := envList[key]; !exists {
@@ -406,4 +429,30 @@ func (dpi *GenericDevicePlugin) healthCheck() error {
 			}
 		}
 	}
+}
+
+func supportsIOMMUFD() (bool, error) {
+	_, err := os.Stat(filepath.Join(rootPath, iommuDevicePath))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+func readVFIODev(basePath string, deviceAddress string) (string, error) {
+	content, err := os.ReadDir(filepath.Join(basePath, deviceAddress, "vfio-dev"))
+	if err != nil {
+		return "", err
+	}
+	for _, c := range content {
+		if !c.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(c.Name(), "vfio") {
+			return c.Name(), nil
+		}
+	}
+	return "", fmt.Errorf("no iommufd device found")
 }
