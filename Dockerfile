@@ -48,7 +48,7 @@ COPY . .
 
 RUN make build
 
-FROM nvcr.io/nvidia/${CUDA_IMAGE}:${CUDA_VERSION}-base-${BASE_DIST}
+FROM nvcr.io/nvidia/distroless/go:v3.1.8
 
 ARG VERSION
 
@@ -60,11 +60,9 @@ LABEL release="N/A"
 LABEL summary="NVIDIA device plugin for KubeVirt"
 LABEL description="See summary"
 
-RUN mkdir /licenses && mv /NGC-DL-CONTAINER-LICENSE /licenses/NGC-DL-CONTAINER-LICENSE
-
 COPY --from=builder /go/src/kubevirt-gpu-device-plugin/nvidia-kubevirt-gpu-device-plugin /usr/bin/
 COPY --from=builder /go/src/kubevirt-gpu-device-plugin/utils/pci.ids /usr/pci.ids
 
-RUN yum update -y
+USER 0:0
 
 CMD ["nvidia-kubevirt-gpu-device-plugin"]
