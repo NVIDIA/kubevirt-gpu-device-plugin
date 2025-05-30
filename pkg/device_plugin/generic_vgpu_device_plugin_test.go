@@ -144,7 +144,7 @@ var _ = Describe("Generic Device", func() {
 
 	It("Should allocate a device without error", func() {
 		devs := []string{"1"}
-		envKey := vgpuPrefix + "_vGPUId"
+		envKey := vgpuPrefix + "_VGPUID"
 		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)

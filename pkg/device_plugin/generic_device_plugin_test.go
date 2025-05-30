@@ -33,6 +33,7 @@ import (
 	"errors"
 	"os"
 	"path"
+	"path/filepath"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -101,6 +102,7 @@ var _ = Describe("Generic Device", func() {
 		var devs []*pluginapi.Device
 		workDir, err = os.MkdirTemp("", "kubevirt-test")
 		Expect(err).ToNot(HaveOccurred())
+		rootPath = workDir
 
 		devicePath = path.Join(workDir, iommuGroup1)
 		fileObj, err := os.Create(devicePath)
@@ -111,6 +113,7 @@ var _ = Describe("Generic Device", func() {
 		fileObj, err = os.Create(devicePath)
 		Expect(err).ToNot(HaveOccurred())
 		fileObj.Close()
+		basePath = workDir
 
 		devs = append(devs, &pluginapi.Device{
 			ID:     iommuGroup1,
@@ -139,7 +142,7 @@ var _ = Describe("Generic Device", func() {
 
 	It("Should allocate a device without error", func() {
 		devs := []string{iommuGroup1}
-		envKey := gpuPrefix + "_foo"
+		envKey := gpuPrefix + "_FOO"
 		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
@@ -153,6 +156,35 @@ var _ = Describe("Generic Device", func() {
 		Expect(responses.GetContainerResponses()[0].Devices[1].HostPath).To(Equal("/dev/vfio/1"))
 		Expect(responses.GetContainerResponses()[0].Devices[1].ContainerPath).To(Equal("/dev/vfio/1"))
 		Expect(responses.GetContainerResponses()[0].Devices[1].Permissions).To(Equal("mrw"))
+	})
+
+	It("Should allocate a device without error with iommufd support", func() {
+		Expect(os.MkdirAll(filepath.Join(workDir, "dev"), 0744)).To(Succeed())
+		f, err := os.OpenFile(filepath.Join(workDir, "dev", "iommu"), os.O_RDONLY|os.O_CREATE, 0666)
+		Expect(err).ToNot(HaveOccurred())
+		f.Close()
+		Expect(os.MkdirAll(filepath.Join(workDir, pciAddress1, "vfio-dev", "vfio3"), 0744)).To(Succeed())
+		devs := []string{iommuGroup1}
+		envKey := gpuPrefix + "_FOO"
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		requests := pluginapi.AllocateRequest{}
+		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
+		ctx := context.Background()
+		responses, err := dpi.Allocate(ctx, &requests)
+		Expect(err).To(BeNil())
+		Expect(responses.GetContainerResponses()[0].Envs[envKey]).To(Equal(pciAddress1))
+		Expect(responses.GetContainerResponses()[0].Devices[0].HostPath).To(Equal("/dev/vfio/devices/vfio3"))
+		Expect(responses.GetContainerResponses()[0].Devices[0].ContainerPath).To(Equal("/dev/vfio/devices/vfio3"))
+		Expect(responses.GetContainerResponses()[0].Devices[0].Permissions).To(Equal("mrw"))
+		Expect(responses.GetContainerResponses()[0].Devices[1].HostPath).To(Equal("/dev/vfio/vfio"))
+		Expect(responses.GetContainerResponses()[0].Devices[1].ContainerPath).To(Equal("/dev/vfio/vfio"))
+		Expect(responses.GetContainerResponses()[0].Devices[1].Permissions).To(Equal("mrw"))
+		Expect(responses.GetContainerResponses()[0].Devices[2].HostPath).To(Equal("/dev/vfio/1"))
+		Expect(responses.GetContainerResponses()[0].Devices[2].ContainerPath).To(Equal("/dev/vfio/1"))
+		Expect(responses.GetContainerResponses()[0].Devices[2].Permissions).To(Equal("mrw"))
+		Expect(responses.GetContainerResponses()[0].Devices[3].HostPath).To(Equal("/dev/iommu"))
+		Expect(responses.GetContainerResponses()[0].Devices[3].ContainerPath).To(Equal("/dev/iommu"))
+		Expect(responses.GetContainerResponses()[0].Devices[3].Permissions).To(Equal("mrw"))
 	})
 
 	It("Should not allocate a device and also throw an error", func() {

@@ -63,6 +63,9 @@ var vGpuMap map[string][]NvidiaGpuDevice
 var gpuVgpuMap map[string][]string
 
 var basePath = "/sys/bus/pci/devices"
+
+// rootPath can be set for testing to simplify testing
+var rootPath = "/"
 var vGpuBasePath = "/sys/bus/mdev/devices"
 var pciIdsFilePath = "/usr/pci.ids"
 var readLink = readLinkFunc
