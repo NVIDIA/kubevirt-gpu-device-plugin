@@ -142,7 +142,7 @@ var _ = Describe("Generic Device", func() {
 
 	It("Should allocate a device without error", func() {
 		devs := []string{iommuGroup1}
-		envKey := gpuPrefix + "_foo"
+		envKey := gpuPrefix + "_FOO"
 		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
@@ -165,7 +165,7 @@ var _ = Describe("Generic Device", func() {
 		f.Close()
 		Expect(os.MkdirAll(filepath.Join(workDir, pciAddress1, "vfio-dev", "vfio3"), 0744)).To(Succeed())
 		devs := []string{iommuGroup1}
-		envKey := gpuPrefix + "-foo"
+		envKey := gpuPrefix + "_FOO"
 		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
