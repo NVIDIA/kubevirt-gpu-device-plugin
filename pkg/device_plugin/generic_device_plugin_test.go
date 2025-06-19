@@ -51,6 +51,7 @@ var pciAddress1 = "11"
 var pciAddress2 = "22"
 var pciAddress3 = "33"
 var nvVendorID = "10de"
+var numaNodeID = 0
 
 type fakeDevicePluginListAndWatchServer struct {
 	grpc.ServerStream
