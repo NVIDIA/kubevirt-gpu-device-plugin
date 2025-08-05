@@ -269,7 +269,7 @@ var _ = Describe("Device Plugin", func() {
 
 		})
 
-		It("", func() {
+		It("When RegisterAll set to default false", func() {
 			readLink = getFakeLinkDevicePlugin
 			readIDFromFile = getFakeIDFromFileDevicePlugin
 			startDevicePlugin = fakeStartDevicePluginFunc
@@ -279,6 +279,23 @@ var _ = Describe("Device Plugin", func() {
 			Expect(iommuList[0].addr).To(Equal("1"))
 			deviceList := deviceMap["1b80"]
 			Expect(deviceList[0]).To(Equal("io_1"))
+
+			go createDevicePlugins()
+			time.Sleep(3 * time.Second)
+			stop <- struct{}{}
+
+		})
+		It("When RegisterAll = true", func() {
+			readLink = getFakeLinkDevicePlugin
+			readIDFromFile = getFakeIDFromFileDevicePlugin
+			startDevicePlugin = fakeStartDevicePluginFunc
+			RegisterAll = true
+			createIommuDeviceMap()
+
+			iommuList := iommuMap["io_1|1"]
+			Expect(iommuList[0].addr).To(Equal("1"))
+			deviceList := deviceMap["1b80"]
+			Expect(deviceList[0]).To(Equal("io_1|1"))
 
 			go createDevicePlugins()
 			time.Sleep(3 * time.Second)

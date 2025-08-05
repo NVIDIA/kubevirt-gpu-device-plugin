@@ -28,8 +28,14 @@
 
 package main
 
-import "kubevirt-gpu-device-plugin/pkg/device_plugin"
+import (
+	"flag"
+	"kubevirt-gpu-device-plugin/pkg/device_plugin"
+)
 
 func main() {
+	flag.BoolVar(&device_plugin.RegisterAll, "register-all", false,
+		"Allow the device plugin to register multiple identical devices sharing the same IOMMU group. WARNING: Devices that belong to the same IOMMU group cannot be passed through to different VMs.")
+	flag.Parse()
 	device_plugin.InitiateDevicePlugin()
 }

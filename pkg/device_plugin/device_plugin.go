@@ -42,7 +42,8 @@ import (
 )
 
 const (
-	nvidiaVendorID = "10de"
+	nvidiaVendorID    = "10de"
+	deviceIDSeparator = "|"
 )
 
 // Structure to hold details about Nvidia GPU Device
@@ -75,6 +76,9 @@ var readVgpuIDFromFile = readVgpuIDFromFileFunc
 var readGpuIDForVgpu = readGpuIDForVgpuFunc
 var startVgpuDevicePlugin = startVgpuDevicePluginFunc
 var stop = make(chan struct{})
+
+// RegisterAll is set by the --register-all CLI flag
+var RegisterAll bool
 
 func InitiateDevicePlugin() {
 	//Identifies GPUs and represents it in appropriate structures
@@ -183,7 +187,7 @@ func createIommuDeviceMap() {
 		}
 
 		//Nvidia vendor id is "10de". Proceed if vendor id is 10de
-		if vendorID == "10de" {
+		if vendorID == nvidiaVendorID {
 			log.Println("Nvidia device ", info.Name())
 			//Retrieve iommu group for the device
 			driver, err := readLink(basePath, info.Name(), "driver")
@@ -198,17 +202,21 @@ func createIommuDeviceMap() {
 					return nil
 				}
 				log.Println("Iommu Group " + iommuGroup)
-				_, exists := iommuMap[iommuGroup]
+				pciID := iommuGroup
+				if RegisterAll {
+					pciID = strings.Join([]string{iommuGroup, info.Name()}, deviceIDSeparator)
+				}
+				_, exists := iommuMap[pciID]
 				if !exists {
 					deviceID, err := readIDFromFile(basePath, info.Name(), "device")
 					if err != nil {
-						log.Println("Could get deviceID for PCI address ", info.Name())
+						log.Println("Could not get deviceID for PCI address ", info.Name())
 						return nil
 					}
 					log.Printf("Device Id %s", deviceID)
-					deviceMap[deviceID] = append(deviceMap[deviceID], iommuGroup)
+					deviceMap[deviceID] = append(deviceMap[deviceID], pciID)
 				}
-				iommuMap[iommuGroup] = append(iommuMap[iommuGroup], NvidiaGpuDevice{info.Name()})
+				iommuMap[pciID] = append(iommuMap[pciID], NvidiaGpuDevice{info.Name()})
 			}
 		}
 		return nil
