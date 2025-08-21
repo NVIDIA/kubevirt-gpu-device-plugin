@@ -35,6 +35,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	klog "k8s.io/klog/v2"
@@ -62,6 +63,9 @@ var vGpuMap map[string][]NvidiaGpuDevice
 // Key is the Nvidia GPU id and value is the list of associated vGPU ids
 var gpuVgpuMap map[string][]string
 
+// deviceNumaMap is a map of device id to NUMA node id
+var deviceNumaMap map[string]int
+
 var basePath = "/sys/bus/pci/devices"
 
 // rootPath can be set for testing to simplify testing
@@ -70,6 +74,7 @@ var vGpuBasePath = "/sys/bus/mdev/devices"
 var pciIdsFilePath = "/usr/pci.ids"
 var readLink = readLinkFunc
 var readIDFromFile = readIDFromFileFunc
+var readNUMAnodeIDFromFile = readNUMAnodeIDFromFileFunc
 var startDevicePlugin = startDevicePluginFunc
 var readVgpuIDFromFile = readVgpuIDFromFileFunc
 var readGpuIDForVgpu = readGpuIDForVgpuFunc
@@ -94,15 +99,25 @@ func createDevicePlugins() {
 	log.Printf("Device Map %s", deviceMap)
 	log.Println("vGPU Map ", vGpuMap)
 	log.Println("GPU vGPU Map ", gpuVgpuMap)
+	log.Println("Device NUMA Map ", deviceNumaMap)
 
 	//Iterate over deivceMap to create device plugin for each type of GPU on the host
 	for k, v := range deviceMap {
 		devs = nil
 		for _, dev := range v {
-			devs = append(devs, &pluginapi.Device{
+			device := &pluginapi.Device{
 				ID:     dev,
 				Health: pluginapi.Healthy,
-			})
+			}
+			numa, found := deviceNumaMap[dev]
+			if found {
+				device.Topology = &pluginapi.TopologyInfo{
+					Nodes: []*pluginapi.NUMANode{{ID: int64(numa)}},
+				}
+			} else {
+				log.Printf("Error: Could not find NUMA node for device id: %s", dev)
+			}
+			devs = append(devs, device)
 		}
 		deviceName := getDeviceName(k)
 		if deviceName == "" {
@@ -165,6 +180,7 @@ func startVgpuDevicePluginFunc(dp *GenericVGpuDevicePlugin) error {
 func createIommuDeviceMap() {
 	iommuMap = make(map[string][]NvidiaGpuDevice)
 	deviceMap = make(map[string][]string)
+	deviceNumaMap = make(map[string]int)
 	//Walk directory to discover pci devices
 	filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -209,6 +225,15 @@ func createIommuDeviceMap() {
 					deviceMap[deviceID] = append(deviceMap[deviceID], iommuGroup)
 				}
 				iommuMap[iommuGroup] = append(iommuMap[iommuGroup], NvidiaGpuDevice{info.Name()})
+				numaID, err := readNUMAnodeIDFromFile(basePath, info.Name())
+				if err != nil {
+					log.Println("Could not get numa node id for device ", info.Name())
+					return nil
+				}
+				if numaID != nil {
+					log.Printf("NUMA node for device %s is %d", info.Name(), *numaID)
+					deviceNumaMap[iommuGroup] = *numaID
+				}
 			}
 		}
 		return nil
@@ -258,6 +283,20 @@ func readIDFromFileFunc(basePath string, deviceAddress string, property string) 
 	}
 	id := strings.Trim(string(data[2:]), "\n")
 	return id, nil
+}
+
+func readNUMAnodeIDFromFileFunc(basePath string, deviceAddress string) (*int, error) {
+	numaContent, err := ioutil.ReadFile(filepath.Join(basePath, deviceAddress, "numa_node"))
+	if err != nil {
+		glog.Errorf("Could not read NUMA node id for device %s, err %s", deviceAddress, err)
+		return nil, err
+	}
+	numaID, err := strconv.Atoi(strings.Trim(string(numaContent), " \n"))
+	if err != nil {
+		glog.Errorf("Could not convert to int NUMA node id for device %s, err %s", deviceAddress, err)
+		return nil, err
+	}
+	return &numaID, nil
 }
 
 // Read a file link
