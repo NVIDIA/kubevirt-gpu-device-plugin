@@ -44,7 +44,7 @@ COPY . .
 
 RUN make build
 
-FROM nvcr.io/nvidia/distroless/go:v3.1.11
+FROM nvcr.io/nvidia/distroless/go:v3.1.12
 
 ARG VERSION
 
