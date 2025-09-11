@@ -24,7 +24,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-FROM nvcr.io/nvidia/cuda:12.9.1-base-ubi9 as builder
+FROM nvcr.io/nvidia/cuda:13.0.1-base-ubi9 as builder
 
 RUN yum install -y wget make gcc
 
