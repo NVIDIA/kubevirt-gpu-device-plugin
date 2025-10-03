@@ -261,12 +261,16 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 	}
 	for _, req := range reqs.ContainerRequests {
 		deviceSpecs := make([]*pluginapi.DeviceSpec, 0)
-		for _, iommuId := range req.DevicesIDs {
+		for _, pciId := range req.DevicesIDs {
 			devAddrs := []string{}
+			iommuId := pciId
+			if RegisterAll {
+				iommuId = strings.Split(pciId, deviceIDSeparator)[0]
+			}
 
 			returnedMap := returnIommuMap()
-			//Retrieve the devices associated with a Iommu group
-			nvDev := returnedMap[iommuId]
+			//Retrieve the devices
+			nvDev := returnedMap[pciId]
 			for _, dev := range nvDev {
 				iommuGroup, err := readLink(basePath, dev.addr, "iommu_group")
 				if err != nil || iommuGroup != iommuId {
@@ -391,6 +395,9 @@ func (dpi *GenericDevicePlugin) healthCheck() error {
 
 	for _, dev := range dpi.devs {
 		devicePath := filepath.Join(path, dev.ID)
+		if RegisterAll {
+			devicePath = filepath.Join(path, strings.Split(dev.ID, deviceIDSeparator)[0])
+		}
 		err = watcher.Add(devicePath)
 		log.Printf(" Adding Watcher to Path : %v", devicePath)
 		pathDeviceMap[devicePath] = dev.ID
