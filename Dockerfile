@@ -24,25 +24,43 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-FROM nvcr.io/nvidia/cuda:12.9.1-base-ubi9 as builder
+# syntax=docker/dockerfile:1.7
 
-RUN yum install -y wget make gcc
+ARG TARGETPLATFORM
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
 
-ARG GOLANG_VERSION=1.24.0
-RUN wget -nv -O - https://storage.googleapis.com/golang/go${GOLANG_VERSION}.linux-amd64.tar.gz \
-    | tar -C /usr/local -xz
+FROM --platform=$TARGETPLATFORM nvcr.io/nvidia/cuda:12.9.1-base-ubi9 AS builder
 
-ENV GOPATH /go
-ENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+ARG GOLANG_VERSION=1.23.5
 
-ENV GOOS=linux\
-    GOARCH=amd64
+RUN yum install -y wget tar gzip make gcc glibc-devel \
+ && case "$TARGETARCH" in \
+      amd64) GO_TARBALL=go${GOLANG_VERSION}.linux-amd64.tar.gz ;; \
+      arm64) GO_TARBALL=go${GOLANG_VERSION}.linux-arm64.tar.gz ;; \
+      *) echo "Unsupported TARGETARCH=${TARGETARCH}" && exit 1 ;; \
+    esac \
+ && wget -nv -O /tmp/go.tgz https://go.dev/dl/${GO_TARBALL} \
+ && tar -C /usr/local -xzf /tmp/go.tgz \
+ && rm -f /tmp/go.tgz
 
-WORKDIR /go/src/kubevirt-gpu-device-plugin
+ENV GOROOT=/usr/local/go
+ENV GOPATH=/go
+ENV PATH=${GOPATH}/bin:${GOROOT}/bin:${PATH}
 
-COPY . . 
+WORKDIR /workspace
 
-RUN make build
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -o nvidia-kubevirt-gpu-device-plugin ./cmd
 
 FROM nvcr.io/nvidia/distroless/go:v3.1.11
 
@@ -56,8 +74,8 @@ LABEL release="N/A"
 LABEL summary="NVIDIA device plugin for KubeVirt"
 LABEL description="See summary"
 
-COPY --from=builder /go/src/kubevirt-gpu-device-plugin/nvidia-kubevirt-gpu-device-plugin /usr/bin/
-COPY --from=builder /go/src/kubevirt-gpu-device-plugin/utils/pci.ids /usr/pci.ids
+COPY --from=builder /workspace/nvidia-kubevirt-gpu-device-plugin /usr/bin/
+COPY --from=builder /workspace/utils/pci.ids /usr/pci.ids
 
 USER 0:0
 
