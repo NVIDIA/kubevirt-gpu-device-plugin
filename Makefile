@@ -26,11 +26,13 @@
 
 DOCKER_REPO ?= "nvcr.io/nvidia/kubevirt-gpu-device-plugin"
 DOCKER_TAG ?= v1.4.0
+PLATFORMS ?= linux/amd64,linux/arm64
+BUILDX_OUTPUT ?= type=registry
 
 PCI_IDS_URL ?= https://pci-ids.ucw.cz/v2.2/pci.ids
 
 build:
-	go build -o nvidia-kubevirt-gpu-device-plugin kubevirt-gpu-device-plugin/cmd
+	go build -trimpath -o nvidia-kubevirt-gpu-device-plugin ./cmd
 test:
 	go test ./... -coverprofile=coverage.out -v
 test-coverage:
@@ -38,7 +40,13 @@ test-coverage:
 clean:
 	rm -rf nvidia-kubevirt-gpu-device-plugin && rm -rf coverage.out
 build-image:
-	docker build . -t $(DOCKER_REPO):$(DOCKER_TAG) 
+	docker build --build-arg VERSION=$(DOCKER_TAG) -t $(DOCKER_REPO):$(DOCKER_TAG) .
+build-image-multi:
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		--build-arg VERSION=$(DOCKER_TAG) \
+		--output $(BUILDX_OUTPUT) \
+		-t $(DOCKER_REPO):$(DOCKER_TAG) .
 push-image: build-image
 	 docker push $(DOCKER_REPO):$(DOCKER_TAG)
 update-pcidb:

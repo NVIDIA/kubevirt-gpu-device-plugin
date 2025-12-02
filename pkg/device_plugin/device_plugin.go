@@ -35,6 +35,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	klog "k8s.io/klog/v2"
@@ -47,14 +48,18 @@ const (
 
 // Structure to hold details about Nvidia GPU Device
 type NvidiaGpuDevice struct {
-	addr string // PCI address of device
+	addr     string // PCI address of device
+	numaNode int64  // NUMA node ID
 }
 
 // Key is iommu group id and value is a list of gpu devices part of the iommu group
 var iommuMap map[string][]NvidiaGpuDevice
 
-// Keys are the distinct Nvidia GPU device ids present on system and value is the list of all iommu group ids which are of that device id
-var deviceMap map[string][]string
+// Keys are the distinct Nvidia GPU device ids present on system and value is the list of all Nvidia GPU devices of that type
+var deviceMap map[string][]NvidiaGpuDevice
+
+// Maps PCI BDF to iommu group ids
+var bdfToIommuMap map[string]string
 
 // Key is vGPU Type and value is the list of Nvidia vGPUs of that type
 var vGpuMap map[string][]NvidiaGpuDevice
@@ -67,9 +72,14 @@ var basePath = "/sys/bus/pci/devices"
 // rootPath can be set for testing to simplify testing
 var rootPath = "/"
 var vGpuBasePath = "/sys/bus/mdev/devices"
+var supportedVfioDrivers = map[string]struct{}{
+	"vfio-pci":             {},
+	"nvgrace_gpu_vfio_pci": {},
+}
 var pciIdsFilePath = "/usr/pci.ids"
 var readLink = readLinkFunc
 var readIDFromFile = readIDFromFileFunc
+var readNUMANode = readNUMANodeFunc
 var startDevicePlugin = startDevicePluginFunc
 var readVgpuIDFromFile = readVgpuIDFromFileFunc
 var readGpuIDForVgpu = readGpuIDForVgpuFunc
@@ -90,19 +100,26 @@ func createDevicePlugins() {
 	var devicePlugins []*GenericDevicePlugin
 	var vGpuDevicePlugins []*GenericVGpuDevicePlugin
 	var devs []*pluginapi.Device
-	log.Printf("Iommu Map %s", iommuMap)
-	log.Printf("Device Map %s", deviceMap)
+	log.Printf("Iommu Map %v", iommuMap)
+	log.Printf("Device Map %v", deviceMap)
 	log.Println("vGPU Map ", vGpuMap)
 	log.Println("GPU vGPU Map ", gpuVgpuMap)
 
 	//Iterate over deivceMap to create device plugin for each type of GPU on the host
-	for k, v := range deviceMap {
+	for k, gpuDevices := range deviceMap {
 		devs = nil
-		for _, dev := range v {
-			devs = append(devs, &pluginapi.Device{
-				ID:     dev,
+		for _, gpuDev := range gpuDevices {
+			device := &pluginapi.Device{
+				ID:     gpuDev.addr,
 				Health: pluginapi.Healthy,
-			})
+				Topology: &pluginapi.TopologyInfo{
+					Nodes: []*pluginapi.NUMANode{
+						{ID: gpuDev.numaNode},
+					},
+				},
+			}
+			log.Printf("Registering device: ID=%s, NUMA=%d, Health=%s", device.ID, gpuDev.numaNode, device.Health)
+			devs = append(devs, device)
 		}
 		deviceName := getDeviceName(k)
 		if deviceName == "" {
@@ -125,6 +142,11 @@ func createDevicePlugins() {
 			devs = append(devs, &pluginapi.Device{
 				ID:     dev.addr,
 				Health: pluginapi.Healthy,
+				Topology: &pluginapi.TopologyInfo{
+					Nodes: []*pluginapi.NUMANode{
+						{ID: dev.numaNode},
+					},
+				},
 			})
 		}
 		deviceName := getDeviceName(k)
@@ -164,7 +186,8 @@ func startVgpuDevicePluginFunc(dp *GenericVGpuDevicePlugin) error {
 // Discovers all Nvidia GPUs which are loaded with VFIO-PCI driver and creates corresponding maps
 func createIommuDeviceMap() {
 	iommuMap = make(map[string][]NvidiaGpuDevice)
-	deviceMap = make(map[string][]string)
+	deviceMap = make(map[string][]NvidiaGpuDevice)
+	bdfToIommuMap = make(map[string]string)
 	//Walk directory to discover pci devices
 	filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -183,7 +206,7 @@ func createIommuDeviceMap() {
 		}
 
 		//Nvidia vendor id is "10de". Proceed if vendor id is 10de
-		if vendorID == "10de" {
+		if vendorID == nvidiaVendorID {
 			log.Println("Nvidia device ", info.Name())
 			//Retrieve iommu group for the device
 			driver, err := readLink(basePath, info.Name(), "driver")
@@ -191,28 +214,41 @@ func createIommuDeviceMap() {
 				log.Println("Could not get driver for device ", info.Name())
 				return nil
 			}
-			if driver == "vfio-pci" {
-				iommuGroup, err := readLink(basePath, info.Name(), "iommu_group")
-				if err != nil {
-					log.Println("Could not get IOMMU Group for device ", info.Name())
-					return nil
-				}
-				log.Println("Iommu Group " + iommuGroup)
-				_, exists := iommuMap[iommuGroup]
-				if !exists {
-					deviceID, err := readIDFromFile(basePath, info.Name(), "device")
-					if err != nil {
-						log.Println("Could get deviceID for PCI address ", info.Name())
-						return nil
-					}
-					log.Printf("Device Id %s", deviceID)
-					deviceMap[deviceID] = append(deviceMap[deviceID], iommuGroup)
-				}
-				iommuMap[iommuGroup] = append(iommuMap[iommuGroup], NvidiaGpuDevice{info.Name()})
+			if !isSupportedVfioDriver(driver) {
+				log.Printf("Skipping %s: driver %s is not a supported VFIO driver", info.Name(), driver)
+				return nil
 			}
+			iommuGroup, err := readLink(basePath, info.Name(), "iommu_group")
+			if err != nil {
+				log.Println("Could not get IOMMU Group for device ", info.Name())
+				return nil
+			}
+			numaNode, err := readNUMANode(basePath, info.Name())
+			if err != nil {
+				log.Printf("Could not get NUMA node for device %s: %v. Defaulting to NUMA node 0", info.Name(), err)
+				numaNode = 0
+			}
+			log.Println("Iommu Group " + iommuGroup)
+			// Always record this PCI device (BDF) under its device ID so we
+			// advertise actual PCI BDFs to kubelet and provide NUMA topology.
+			deviceID, err := readIDFromFile(basePath, info.Name(), "device")
+			if err != nil {
+				log.Println("Could get deviceID for PCI address ", info.Name())
+				return nil
+			}
+			log.Printf("Device Id %s", deviceID)
+			deviceMap[deviceID] = append(deviceMap[deviceID], NvidiaGpuDevice{addr: info.Name(), numaNode: numaNode})
+			gpuDevice := NvidiaGpuDevice{addr: info.Name(), numaNode: numaNode}
+			iommuMap[iommuGroup] = append(iommuMap[iommuGroup], gpuDevice)
+			bdfToIommuMap[info.Name()] = iommuGroup
 		}
 		return nil
 	})
+}
+
+func isSupportedVfioDriver(driver string) bool {
+	_, exists := supportedVfioDrivers[driver]
+	return exists
 }
 
 // Discovers all Nvidia vGPUs configured on a node and creates corresponding maps
@@ -241,10 +277,15 @@ func createVgpuIDMap() {
 			log.Println("Could not get vGPU type identifier for device ", info.Name())
 			return nil
 		}
+		numaNode, err := readNUMANode(basePath, gpuID)
+		if err != nil {
+			log.Printf("Could not get NUMA node for GPU %s: %v. Defaulting to NUMA node 0", gpuID, err)
+			numaNode = 0
+		}
 		log.Printf("Gpu id is %s", gpuID)
 		log.Printf("Vgpu id is %s", vGpuID)
 		gpuVgpuMap[gpuID] = append(gpuVgpuMap[gpuID], info.Name())
-		vGpuMap[vGpuID] = append(vGpuMap[vGpuID], NvidiaGpuDevice{info.Name()})
+		vGpuMap[vGpuID] = append(vGpuMap[vGpuID], NvidiaGpuDevice{addr: info.Name(), numaNode: numaNode})
 		return nil
 	})
 }
@@ -258,6 +299,24 @@ func readIDFromFileFunc(basePath string, deviceAddress string, property string) 
 	}
 	id := strings.Trim(string(data[2:]), "\n")
 	return id, nil
+}
+
+func readNUMANodeFunc(basePath string, deviceAddress string) (int64, error) {
+	data, err := os.ReadFile(filepath.Join(basePath, deviceAddress, "numa_node"))
+	if err != nil {
+		klog.Errorf("Could not read NUMA node for device %s: %s", deviceAddress, err)
+		return 0, err
+	}
+	nodeStr := strings.TrimSpace(string(data))
+	nodeID, err := strconv.ParseInt(nodeStr, 10, 64)
+	if err != nil {
+		klog.Errorf("Could not parse NUMA node for device %s: %s", deviceAddress, err)
+		return 0, err
+	}
+	if nodeID < 0 {
+		return 0, nil
+	}
+	return nodeID, nil
 }
 
 // Read a file link
@@ -299,6 +358,10 @@ func readGpuIDForVgpuFunc(basePath string, deviceAddress string) (string, error)
 
 func getIommuMap() map[string][]NvidiaGpuDevice {
 	return iommuMap
+}
+
+func getBdfToIommuMap() map[string]string {
+	return bdfToIommuMap
 }
 
 func getGpuVgpuMap() map[string][]string {

@@ -57,6 +57,7 @@ const (
 )
 
 var returnIommuMap = getIommuMap
+var returnBdfToIommuMap = getBdfToIommuMap
 
 // Implements the kubernetes device plugin API
 type GenericDevicePlugin struct {
@@ -216,11 +217,22 @@ func (dpi *GenericDevicePlugin) Register() error {
 	if err != nil {
 		return err
 	}
+	log.Printf("[%s] Successfully registered with kubelet for resource: %s/%s (endpoint: %s)",
+		dpi.deviceName, DeviceNamespace, dpi.deviceName, path.Base(dpi.socketPath))
 	return nil
 }
 
 // ListAndWatch lists devices and update that list according to the health status
 func (dpi *GenericDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin_ListAndWatchServer) error {
+
+	log.Printf("[%s] ListAndWatch called, sending %d devices:", dpi.deviceName, len(dpi.devs))
+	for _, dev := range dpi.devs {
+		numaNodes := "nil"
+		if dev.Topology != nil && len(dev.Topology.Nodes) > 0 {
+			numaNodes = fmt.Sprintf("%d", dev.Topology.Nodes[0].ID)
+		}
+		log.Printf("  Device ID=%s, Health=%s, NUMA=%s", dev.ID, dev.Health, numaNodes)
+	}
 
 	s.Send(&pluginapi.ListAndWatchResponse{Devices: dpi.devs})
 
@@ -252,7 +264,13 @@ func (dpi *GenericDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.Dev
 
 // Performs pre allocation checks and allocates a devices based on the request
 func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
-	log.Println("In allocate")
+	log.Printf("[%s] ========== ALLOCATE CALLED ==========", dpi.deviceName)
+	log.Printf("[%s] Allocate() called with %d container request(s)", dpi.deviceName, len(reqs.ContainerRequests))
+	for i, req := range reqs.ContainerRequests {
+		log.Printf("[%s] Container request %d: DeviceIDs=%v", dpi.deviceName, i, req.DevicesIDs)
+	}
+	log.Printf("[%s] This means kubelet passed Topology Manager admission!", dpi.deviceName)
+
 	responses := pluginapi.AllocateResponse{}
 	envList := map[string][]string{}
 	iommufdSupported, err := supportsIOMMUFD()
@@ -261,12 +279,19 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 	}
 	for _, req := range reqs.ContainerRequests {
 		deviceSpecs := make([]*pluginapi.DeviceSpec, 0)
-		for _, iommuId := range req.DevicesIDs {
+		returnedMap := returnIommuMap()
+		bdfToIommu := returnBdfToIommuMap()
+		for _, bdf := range req.DevicesIDs {
+			iommuId, ok := bdfToIommu[bdf]
+			if !ok {
+				return nil, fmt.Errorf("invalid allocation request: unknown device: %s", bdf)
+			}
 			devAddrs := []string{}
-
-			returnedMap := returnIommuMap()
-			//Retrieve the devices associated with a Iommu group
 			nvDev := returnedMap[iommuId]
+			if len(nvDev) == 0 {
+				return nil, fmt.Errorf("invalid allocation request: unknown device: %s", bdf)
+			}
+			requestedDeviceFound := false
 			for _, dev := range nvDev {
 				iommuGroup, err := readLink(basePath, dev.addr, "iommu_group")
 				if err != nil || iommuGroup != iommuId {
@@ -274,12 +299,15 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 					return nil, fmt.Errorf("invalid allocation request: unknown device: %s", dev.addr)
 				}
 				vendorID, err := readIDFromFile(basePath, dev.addr, "vendor")
-				if err != nil || vendorID != "10de" {
+				if err != nil || vendorID != nvidiaVendorID {
 					log.Println("Vendor has changed on the system ", dev.addr)
 					return nil, fmt.Errorf("invalid allocation request: unknown device: %s", dev.addr)
 				}
 
 				devAddrs = append(devAddrs, dev.addr)
+				if dev.addr == bdf {
+					requestedDeviceFound = true
+				}
 				if iommufdSupported {
 					vfiodev, err := readVFIODev(basePath, dev.addr)
 					if err != nil {
@@ -291,6 +319,9 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 						Permissions:   "mrw",
 					})
 				}
+			}
+			if !requestedDeviceFound {
+				return nil, fmt.Errorf("invalid allocation request: unknown device: %s", bdf)
 			}
 			deviceSpecs = append(deviceSpecs, &pluginapi.DeviceSpec{
 				HostPath:      filepath.Join(vfioDevicePath, "vfio"),
@@ -317,7 +348,7 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 			envList[key] = append(envList[key], devAddrs...)
 		}
 		envs := buildEnv(envList)
-		log.Printf("Allocated devices %s", envs)
+		log.Printf("[%s] Allocated devices - Envs: %v, DeviceSpecs count: %d", dpi.deviceName, envs, len(deviceSpecs))
 		response := pluginapi.ContainerAllocateResponse{
 			Envs:    envs,
 			Devices: deviceSpecs,
@@ -339,7 +370,8 @@ func (dpi *GenericDevicePlugin) cleanup() error {
 
 func (dpi *GenericDevicePlugin) GetDevicePluginOptions(ctx context.Context, e *pluginapi.Empty) (*pluginapi.DevicePluginOptions, error) {
 	options := &pluginapi.DevicePluginOptions{
-		PreStartRequired: false,
+		PreStartRequired:                false,
+		GetPreferredAllocationAvailable: true,
 	}
 	return options, nil
 }
@@ -349,24 +381,156 @@ func (dpi *GenericDevicePlugin) PreStartContainer(ctx context.Context, in *plugi
 	return res, nil
 }
 
-// GetPreferredAllocation is for compatible with new DevicePluginServer API for DevicePlugin service. It has not been implemented in kubevrit-gpu-device-plugin
+// GetPreferredAllocation returns a preferred set of devices to allocate
+// from a list of available ones. This helps the Topology Manager make
+// topology-aware allocation decisions based on NUMA affinity.
 func (dpi *GenericDevicePlugin) GetPreferredAllocation(ctx context.Context, in *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
-	// TODO
-	// returns a preferred set of devices to allocate
-	// from a list of available ones. The resulting preferred allocation is not
-	// guaranteed to be the allocation ultimately performed by the
-	// devicemanager. It is only designed to help the devicemanager make a more
-	// informed allocation decision when possible.
-	return nil, nil
+	log.Printf("[%s] GetPreferredAllocation called with %d container request(s)", dpi.deviceName, len(in.ContainerRequests))
+
+	response := &pluginapi.PreferredAllocationResponse{}
+
+	for idx, req := range in.ContainerRequests {
+		log.Printf("[%s] Container request %d: Available devices=%v, MustInclude=%v, AllocationSize=%d",
+			dpi.deviceName, idx, req.AvailableDeviceIDs, req.MustIncludeDeviceIDs, req.AllocationSize)
+
+		// Build a map of device ID to NUMA node from our device list
+		deviceToNUMA := make(map[string]int64)
+		for _, dev := range dpi.devs {
+			if dev.Topology != nil && len(dev.Topology.Nodes) > 0 {
+				deviceToNUMA[dev.ID] = dev.Topology.Nodes[0].ID
+			}
+		}
+		getNUMANode := func(deviceID string) int64 {
+			if node, ok := deviceToNUMA[deviceID]; ok {
+				return node
+			}
+			return -1
+		}
+
+		// Group available devices by NUMA node while preserving iteration order
+		numaToDevices := make(map[int64][]string)
+		var nodeOrder []int64
+		nodeSeen := make(map[int64]struct{})
+		for _, deviceID := range req.AvailableDeviceIDs {
+			numaNode := getNUMANode(deviceID)
+			numaToDevices[numaNode] = append(numaToDevices[numaNode], deviceID)
+			if _, ok := nodeSeen[numaNode]; !ok {
+				nodeOrder = append(nodeOrder, numaNode)
+				nodeSeen[numaNode] = struct{}{}
+			}
+		}
+
+		// Prefer devices from the same NUMA node
+		var preferredDevices []string
+		preferredSet := make(map[string]struct{})
+		selectedPerNode := make(map[int64]int)
+		addDevice := func(deviceID string) {
+			if _, exists := preferredSet[deviceID]; exists {
+				return
+			}
+			preferredSet[deviceID] = struct{}{}
+			numaNode := getNUMANode(deviceID)
+			selectedPerNode[numaNode]++
+			preferredDevices = append(preferredDevices, deviceID)
+		}
+
+		// Always place must-include devices first
+		selectedNodeOrder := []int64{}
+		selectedNodeSeen := make(map[int64]struct{})
+		for _, deviceID := range req.MustIncludeDeviceIDs {
+			if _, exists := preferredSet[deviceID]; exists {
+				continue
+			}
+			addDevice(deviceID)
+			numaNode := getNUMANode(deviceID)
+			if _, ok := selectedNodeSeen[numaNode]; !ok {
+				selectedNodeOrder = append(selectedNodeOrder, numaNode)
+				selectedNodeSeen[numaNode] = struct{}{}
+			}
+		}
+
+		if len(preferredDevices) > int(req.AllocationSize) {
+			return nil, fmt.Errorf("number of MustIncludeDeviceIDs (%d) exceeds allocation size (%d)",
+				len(preferredDevices), req.AllocationSize)
+		}
+
+		// First, try to satisfy the request from a single NUMA node (including already selected devices)
+		if len(preferredDevices) < int(req.AllocationSize) {
+			targetNode := int64(-1)
+			var candidateNodes []int64
+			candidateNodes = append(candidateNodes, selectedNodeOrder...)
+			for _, node := range nodeOrder {
+				if _, seen := selectedNodeSeen[node]; seen {
+					continue
+				}
+				candidateNodes = append(candidateNodes, node)
+			}
+
+			for _, numaNode := range candidateNodes {
+				availableOnNode := 0
+				for _, deviceID := range numaToDevices[numaNode] {
+					if _, exists := preferredSet[deviceID]; !exists {
+						availableOnNode++
+					}
+				}
+				totalOnNode := selectedPerNode[numaNode] + availableOnNode
+				if totalOnNode >= int(req.AllocationSize) {
+					log.Printf("[%s] Selecting NUMA node %d (have %d selected, %d available) to satisfy %d devices",
+						dpi.deviceName, numaNode, selectedPerNode[numaNode], availableOnNode, req.AllocationSize)
+					targetNode = numaNode
+					break
+				}
+			}
+
+			if targetNode != -1 {
+				for _, deviceID := range numaToDevices[targetNode] {
+					if len(preferredDevices) >= int(req.AllocationSize) {
+						break
+					}
+					addDevice(deviceID)
+				}
+			}
+		}
+
+		// If we couldn't fill the request from a single NUMA node, fall back to the kubelet-provided order
+		if len(preferredDevices) < int(req.AllocationSize) {
+			log.Printf("[%s] Using kubelet-provided device order to satisfy remaining slots (need %d more)",
+				dpi.deviceName, int(req.AllocationSize)-len(preferredDevices))
+			for _, deviceID := range req.AvailableDeviceIDs {
+				if len(preferredDevices) >= int(req.AllocationSize) {
+					break
+				}
+				addDevice(deviceID)
+			}
+		}
+
+		log.Printf("[%s] Preferred allocation for container %d: %v (NUMA nodes: %v)",
+			dpi.deviceName, idx, preferredDevices, func() []int64 {
+				var nodes []int64
+				for _, devID := range preferredDevices {
+					if node, ok := deviceToNUMA[devID]; ok {
+						nodes = append(nodes, node)
+					}
+				}
+				return nodes
+			}())
+
+		response.ContainerResponses = append(response.ContainerResponses,
+			&pluginapi.ContainerPreferredAllocationResponse{
+				DeviceIDs: preferredDevices,
+			})
+	}
+
+	return response, nil
 }
 
 // Health check of GPU devices
 func (dpi *GenericDevicePlugin) healthCheck() error {
 	method := fmt.Sprintf("healthCheck(%s)", dpi.deviceName)
 	log.Printf("%s: invoked", method)
-	var pathDeviceMap = make(map[string]string)
+	var pathDeviceMap = make(map[string][]string)
 	var path = dpi.devicePath
-	var health = ""
+	var watchedPaths = make(map[string]struct{})
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -389,15 +553,25 @@ func (dpi *GenericDevicePlugin) healthCheck() error {
 		}
 	}
 
+	bdfToIommu := returnBdfToIommuMap()
 	for _, dev := range dpi.devs {
-		devicePath := filepath.Join(path, dev.ID)
+		iommuID, ok := bdfToIommu[dev.ID]
+		if !ok {
+			log.Printf("%s: Unable to determine IOMMU group for device %s", method, dev.ID)
+			continue
+		}
+		devicePath := filepath.Join(path, iommuID)
+		pathDeviceMap[devicePath] = append(pathDeviceMap[devicePath], dev.ID)
+		if _, already := watchedPaths[devicePath]; already {
+			continue
+		}
 		err = watcher.Add(devicePath)
-		log.Printf(" Adding Watcher to Path : %v", devicePath)
-		pathDeviceMap[devicePath] = dev.ID
 		if err != nil {
 			log.Printf("%s: Unable to add device path to fsnotify watcher: %v", method, err)
 			return err
 		}
+		log.Printf(" Adding Watcher to Path : %v", devicePath)
+		watchedPaths[devicePath] = struct{}{}
 	}
 
 	for {
@@ -405,16 +579,17 @@ func (dpi *GenericDevicePlugin) healthCheck() error {
 		case <-dpi.stop:
 			return nil
 		case event := <-watcher.Events:
-			v, ok := pathDeviceMap[event.Name]
-			if ok {
+			if deviceIDs, ok := pathDeviceMap[event.Name]; ok {
 				// Health in this case is if the device path actually exists
 				if event.Op == fsnotify.Create {
-					health = v
-					dpi.healthy <- health
+					for _, id := range deviceIDs {
+						dpi.healthy <- id
+					}
 				} else if (event.Op == fsnotify.Remove) || (event.Op == fsnotify.Rename) {
 					log.Printf("%s: Marking device unhealthy: %s", method, event.Name)
-					health = v
-					dpi.unhealthy <- health
+					for _, id := range deviceIDs {
+						dpi.unhealthy <- id
+					}
 				}
 			} else if event.Name == dpi.socketPath && event.Op == fsnotify.Remove {
 				// Watcher event for removal of socket file

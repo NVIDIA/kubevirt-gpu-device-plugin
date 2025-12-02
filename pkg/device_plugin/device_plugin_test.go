@@ -29,6 +29,7 @@
 package device_plugin
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -36,6 +37,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
 var deviceAddress1 = "1"
@@ -58,7 +60,7 @@ func getFakeLinkDevicePlugin(basePath string, deviceAddress string, link string)
 		}
 	} else if deviceAddress == deviceAddress2 {
 		if link == "driver" {
-			return "vfio-pci", nil
+			return "nvgrace_gpu_vfio_pci", nil
 		} else if link == "iommu_group" {
 			return "io_2", nil
 		}
@@ -186,6 +188,36 @@ var _ = Describe("Device Plugin", func() {
 		})
 	})
 
+	Context("readNUMANodeFunc() Tests", func() {
+		BeforeEach(func() {
+			workDir, err = os.MkdirTemp("", "kubevirt-test")
+			Expect(err).ToNot(HaveOccurred())
+			err = os.Mkdir(filepath.Join(workDir, deviceAddress1), 0755)
+			Expect(err).ToNot(HaveOccurred())
+		})
+
+		It("Reads NUMA node without error", func() {
+			err = os.WriteFile(filepath.Join(workDir, deviceAddress1, "numa_node"), []byte("3\n"), 0644)
+			Expect(err).ToNot(HaveOccurred())
+			node, err := readNUMANodeFunc(workDir, deviceAddress1)
+			Expect(err).To(BeNil())
+			Expect(node).To(Equal(int64(3)))
+		})
+
+		It("Defaults to node 0 when NUMA node is -1", func() {
+			err = os.WriteFile(filepath.Join(workDir, deviceAddress1, "numa_node"), []byte("-1\n"), 0644)
+			Expect(err).ToNot(HaveOccurred())
+			node, err := readNUMANodeFunc(workDir, deviceAddress1)
+			Expect(err).To(BeNil())
+			Expect(node).To(Equal(int64(0)))
+		})
+
+		It("Returns error when NUMA node file missing", func() {
+			_, err := readNUMANodeFunc(workDir, deviceAddress1)
+			Expect(err).ShouldNot(BeNil())
+		})
+	})
+
 	Context("readVgpuIDFromFile() Tests", func() {
 		BeforeEach(func() {
 			readVgpuIDFromFile = readVgpuIDFromFileFunc
@@ -278,7 +310,10 @@ var _ = Describe("Device Plugin", func() {
 			iommuList := iommuMap["io_1"]
 			Expect(iommuList[0].addr).To(Equal("1"))
 			deviceList := deviceMap["1b80"]
-			Expect(deviceList[0]).To(Equal("io_1"))
+			Expect(deviceList[0].addr).To(Equal("1"))
+			deviceList = deviceMap["1b81"]
+			Expect(deviceList[0].addr).To(Equal("2"))
+			Expect(bdfToIommuMap["1"]).To(Equal("io_1"))
 
 			go createDevicePlugins()
 			time.Sleep(3 * time.Second)
@@ -296,6 +331,11 @@ var _ = Describe("Device Plugin", func() {
 			workDir, err = os.MkdirTemp("", "kubevirt-test")
 			Expect(err).ToNot(HaveOccurred())
 			vGpuBasePath = workDir
+			basePath = workDir
+			err = os.Mkdir(filepath.Join(workDir, "GpuId"), 0755)
+			Expect(err).ToNot(HaveOccurred())
+			err = os.WriteFile(filepath.Join(workDir, "GpuId", "numa_node"), []byte("2\n"), 0644)
+			Expect(err).ToNot(HaveOccurred())
 			os.Mkdir(filepath.Join(linkDir, deviceAddress1), 0755)
 			os.Mkdir(filepath.Join(linkDir, deviceAddress2), 0755)
 			os.Mkdir(filepath.Join(linkDir, deviceAddress3), 0755)
@@ -321,6 +361,7 @@ var _ = Describe("Device Plugin", func() {
 			Expect(gpuList[0]).To(Equal(deviceAddress1))
 			vGpuList := vGpuMap["vGPUId"]
 			Expect(vGpuList[0].addr).To(Equal(deviceAddress1))
+			Expect(vGpuList[0].numaNode).To(Equal(int64(2)))
 
 			go createDevicePlugins()
 			time.Sleep(3 * time.Second)
@@ -381,6 +422,121 @@ var _ = Describe("Device Plugin", func() {
 			pciIdsFilePath = filepath.Join(workDir, "pci.ids")
 			deviceName := getDeviceName("2331")
 			Expect(deviceName).To(Equal("GH100_H100_PCIE"))
+		})
+	})
+
+	Context("GetDevicePluginOptions() Tests", func() {
+		It("enables preferred allocation flag", func() {
+			dpi := &GenericDevicePlugin{}
+			options, err := dpi.GetDevicePluginOptions(context.Background(), &pluginapi.Empty{})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(options.PreStartRequired).To(BeFalse())
+			Expect(options.GetPreferredAllocationAvailable).To(BeTrue())
+		})
+	})
+
+	Context("GetPreferredAllocation() Tests", func() {
+		var dpi *GenericDevicePlugin
+
+		buildDevice := func(id string, node int64) *pluginapi.Device {
+			return &pluginapi.Device{
+				ID:     id,
+				Health: pluginapi.Healthy,
+				Topology: &pluginapi.TopologyInfo{
+					Nodes: []*pluginapi.NUMANode{
+						{ID: node},
+					},
+				},
+			}
+		}
+
+		BeforeEach(func() {
+			dpi = &GenericDevicePlugin{
+				deviceName: "test",
+				devs: []*pluginapi.Device{
+					buildDevice("gpu0", 0),
+					buildDevice("gpu1", 0),
+					buildDevice("gpu2", 1),
+					buildDevice("gpu3", 1),
+				},
+			}
+		})
+
+		It("keeps must include order and fills remaining slots from same NUMA node", func() {
+			request := &pluginapi.PreferredAllocationRequest{
+				ContainerRequests: []*pluginapi.ContainerPreferredAllocationRequest{
+					{
+						AvailableDeviceIDs:   []string{"gpu0", "gpu1", "gpu2", "gpu3"},
+						MustIncludeDeviceIDs: []string{"gpu2"},
+						AllocationSize:       2,
+					},
+				},
+			}
+
+			resp, err := dpi.GetPreferredAllocation(context.Background(), request)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(resp.ContainerResponses).To(HaveLen(1))
+			Expect(resp.ContainerResponses[0].DeviceIDs).To(Equal([]string{"gpu2", "gpu3"}))
+		})
+
+		It("falls back to kubelet order when must include devices span NUMA nodes", func() {
+			request := &pluginapi.PreferredAllocationRequest{
+				ContainerRequests: []*pluginapi.ContainerPreferredAllocationRequest{
+					{
+						AvailableDeviceIDs:   []string{"gpu0", "gpu1", "gpu2", "gpu3"},
+						MustIncludeDeviceIDs: []string{"gpu0", "gpu2"},
+						AllocationSize:       3,
+					},
+				},
+			}
+
+			resp, err := dpi.GetPreferredAllocation(context.Background(), request)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(resp.ContainerResponses).To(HaveLen(1))
+			Expect(resp.ContainerResponses[0].DeviceIDs).To(Equal([]string{"gpu0", "gpu2", "gpu1"}))
+		})
+
+		It("returns exactly the must include devices when they satisfy allocation size", func() {
+			request := &pluginapi.PreferredAllocationRequest{
+				ContainerRequests: []*pluginapi.ContainerPreferredAllocationRequest{
+					{
+						AvailableDeviceIDs:   []string{"gpu0", "gpu1"},
+						MustIncludeDeviceIDs: []string{"gpu0", "gpu1"},
+						AllocationSize:       2,
+					},
+				},
+			}
+
+			resp, err := dpi.GetPreferredAllocation(context.Background(), request)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(resp.ContainerResponses).To(HaveLen(1))
+
+			devices := resp.ContainerResponses[0].DeviceIDs
+			Expect(devices).To(HaveLen(2))
+			Expect(devices).To(ConsistOf("gpu0", "gpu1"))
+		})
+
+		It("fails when must include devices exceed allocation size", func() {
+			request := &pluginapi.PreferredAllocationRequest{
+				ContainerRequests: []*pluginapi.ContainerPreferredAllocationRequest{
+					{
+						AvailableDeviceIDs:   []string{"gpu0", "gpu1"},
+						MustIncludeDeviceIDs: []string{"gpu0", "gpu1"},
+						AllocationSize:       1,
+					},
+				},
+			}
+
+			_, err := dpi.GetPreferredAllocation(context.Background(), request)
+			Expect(err).To(MatchError("number of MustIncludeDeviceIDs (2) exceeds allocation size (1)"))
+		})
+	})
+
+	Context("isSupportedVfioDriver() Tests", func() {
+		It("Validates supported VFIO drivers", func() {
+			Expect(isSupportedVfioDriver("vfio-pci")).To(BeTrue())
+			Expect(isSupportedVfioDriver("nvgrace_gpu_vfio_pci")).To(BeTrue())
+			Expect(isSupportedVfioDriver("unsupported-driver")).To(BeFalse())
 		})
 	})
 })
