@@ -25,7 +25,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 # syntax=docker/dockerfile:1.7
-FROM --platform=$TARGETPLATFORM nvcr.io/nvidia/cuda:12.9.1-base-ubi9 AS builder
+FROM --platform=$TARGETPLATFORM nvcr.io/nvidia/cuda:13.1.0-base-ubi9 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
