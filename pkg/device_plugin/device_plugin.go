@@ -30,16 +30,20 @@ package device_plugin
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
 	klog "k8s.io/klog/v2"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
+
+	fm "kubevirt-gpu-device-plugin/pkg/fabric_manager"
 )
 
 const (
@@ -86,13 +90,61 @@ var readGpuIDForVgpu = readGpuIDForVgpuFunc
 var startVgpuDevicePlugin = startVgpuDevicePluginFunc
 var stop = make(chan struct{})
 
+// FM (Fabric Manager) configuration flags
+var (
+	fmEnabled = flag.Bool("fm-enabled", false, "Enable Fabric Manager partition support for NVLink")
+	fmAddress = flag.String("fm-address", "127.0.0.1:6666", "Fabric Manager daemon address")
+)
+
+// Global partition manager instance (shared across all device plugins)
+var partitionManager *fm.PartitionManager
+
+// InitiateDevicePlugin initiates the device plugin
 func InitiateDevicePlugin() {
+	// Parse command line flags
+	flag.Parse()
+
 	//Identifies GPUs and represents it in appropriate structures
 	createIommuDeviceMap()
 	//Identifies vGPUs and represents it in appropriate structures
 	createVgpuIDMap()
+
+	// Collect all discovered GPU BDFs for FM mapping
+	var allDevs []string
+	for _, devs := range deviceMap {
+		for _, d := range devs {
+			allDevs = append(allDevs, d.addr)
+		}
+	}
+	sort.Strings(allDevs)
+
+	// Initialize FM partition manager if enabled
+	if *fmEnabled {
+		log.Printf("Fabric Manager support ENABLED, connecting to %s", *fmAddress)
+		initFabricManager(allDevs)
+	} else {
+		log.Println("Fabric Manager support DISABLED")
+	}
+
 	//Creates and starts device plugin
 	createDevicePlugins()
+}
+
+// initFabricManager initializes the Fabric Manager partition manager
+func initFabricManager(devs []string) {
+	// Create native FM client and partition manager
+	fmClient := fm.NewNativeFMClient()
+	partitionManager = fm.NewPartitionManager(fmClient)
+
+	// Initialize: connects to FM, discovers partitions, builds tree
+	if err := partitionManager.Initialize(*fmAddress, devs); err != nil {
+		log.Printf("WARNING: Failed to initialize FM partition manager: %v", err)
+		log.Println("FM partition-aware allocation will be disabled")
+		partitionManager = nil
+		return
+	}
+
+	log.Printf("FM partition manager initialized successfully")
 }
 
 // Starts gpu pass through and vGPU device plugin
@@ -128,6 +180,13 @@ func createDevicePlugins() {
 		}
 		log.Printf("DP Name %s", deviceName)
 		dp := NewGenericDevicePlugin(deviceName, "/dev/vfio/", devs)
+		// Set partition manager if FM is enabled
+		if partitionManager != nil {
+			dp.SetPartitionManager(partitionManager)
+			// Start reconciler if not already running (only need one for all device plugins)
+			resourceName := "nvidia.com/" + deviceName
+			partitionManager.StartReconciler(resourceName)
+		}
 		err := startDevicePlugin(dp)
 		if err != nil {
 			log.Printf("Error starting %s device plugin: %v", dp.deviceName, err)

@@ -31,16 +31,25 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
 ARG GOLANG_VERSION=1.24.0
+ARG FM_VERSION=580
 
 RUN yum install -y wget tar gzip make gcc glibc-devel \
- && case "$TARGETARCH" in \
-      amd64) GO_TARBALL=go${GOLANG_VERSION}.linux-amd64.tar.gz ;; \
-      arm64) GO_TARBALL=go${GOLANG_VERSION}.linux-arm64.tar.gz ;; \
-      *) echo "Unsupported TARGETARCH=${TARGETARCH}" && exit 1 ;; \
+    && case "$TARGETARCH" in \
+    amd64) GO_TARBALL=go${GOLANG_VERSION}.linux-amd64.tar.gz ;; \
+    arm64) GO_TARBALL=go${GOLANG_VERSION}.linux-arm64.tar.gz ;; \
+    *) echo "Unsupported TARGETARCH=${TARGETARCH}" && exit 1 ;; \
     esac \
- && wget -nv -O /tmp/go.tgz https://go.dev/dl/${GO_TARBALL} \
- && tar -C /usr/local -xzf /tmp/go.tgz \
- && rm -f /tmp/go.tgz
+    && wget -nv -O /tmp/go.tgz https://go.dev/dl/${GO_TARBALL} \
+    && tar -C /usr/local -xzf /tmp/go.tgz \
+    && rm -f /tmp/go.tgz
+
+# Install Fabric Manager SDK for NVLink partition support
+# Setup NVIDIA network repository and install FM devel package
+RUN dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
+    && dnf clean expire-cache \
+    && dnf module enable -y nvidia-driver:${FM_VERSION}-open/default \
+    && dnf install -y nvidia-fabricmanager-devel-${FM_VERSION} \
+    && dnf clean all
 
 ENV GOROOT=/usr/local/go
 ENV GOPATH=/go
@@ -68,9 +77,11 @@ LABEL release="N/A"
 LABEL summary="NVIDIA device plugin for KubeVirt"
 LABEL description="See summary"
 
+COPY --from=builder /usr/lib64/libnvfm* /usr/lib64/
 COPY --from=builder /workspace/nvidia-kubevirt-gpu-device-plugin /usr/bin/
 COPY --from=builder /workspace/utils/pci.ids /usr/pci.ids
+ENV LD_LIBRARY_PATH=/usr/lib64
 
 USER 0:0
 
-CMD ["nvidia-kubevirt-gpu-device-plugin"]
+ENTRYPOINT ["nvidia-kubevirt-gpu-device-plugin"]

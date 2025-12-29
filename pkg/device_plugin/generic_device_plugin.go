@@ -38,6 +38,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -45,6 +46,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
+
+	fm "kubevirt-gpu-device-plugin/pkg/fabric_manager"
 )
 
 const (
@@ -61,16 +64,17 @@ var returnBdfToIommuMap = getBdfToIommuMap
 
 // Implements the kubernetes device plugin API
 type GenericDevicePlugin struct {
-	devs       []*pluginapi.Device
-	server     *grpc.Server
-	socketPath string
-	stop       chan struct{} // this channel signals to stop the DP
-	term       chan bool     // this channel detects kubelet restarts
-	healthy    chan string
-	unhealthy  chan string
-	devicePath string
-	deviceName string
-	devsHealth []*pluginapi.Device
+	devs         []*pluginapi.Device
+	server       *grpc.Server
+	socketPath   string
+	stop         chan struct{} // this channel signals to stop the DP
+	term         chan bool     // this channel detects kubelet restarts
+	healthy      chan string
+	unhealthy    chan string
+	devicePath   string
+	deviceName   string
+	devsHealth   []*pluginapi.Device
+	partitionMgr *fm.PartitionManager // Fabric Manager partition manager
 }
 
 // Returns an initialized instance of GenericDevicePlugin
@@ -87,6 +91,13 @@ func NewGenericDevicePlugin(deviceName string, devicePath string, devices []*plu
 		devicePath: devicePath,
 	}
 	return dpi
+}
+
+// SetPartitionManager sets the Fabric Manager partition manager for NVLink support.
+// If set, the plugin will use partition-aware GPU allocation.
+func (dpi *GenericDevicePlugin) SetPartitionManager(mgr *fm.PartitionManager) {
+	dpi.partitionMgr = mgr
+	log.Printf("[%s] Fabric Manager partition support enabled", dpi.deviceName)
 }
 
 func buildEnv(envList map[string][]string) map[string]string {
@@ -357,6 +368,38 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 		responses.ContainerResponses = append(responses.ContainerResponses, &response)
 	}
 
+	// ========== FABRIC MANAGER PARTITION ACTIVATION (NVLink support) ==========
+	// Activate FM partition for allocated GPUs to enable NVLink
+	if dpi.partitionMgr != nil && len(reqs.ContainerRequests) > 0 {
+		// Collect all allocated GPU BDFs
+		var allocatedGPUs []string
+		for _, req := range reqs.ContainerRequests {
+			allocatedGPUs = append(allocatedGPUs, req.DevicesIDs...)
+		}
+
+		if len(allocatedGPUs) > 0 {
+			log.Printf("[%s] Activating FM partition for GPUs: %v", dpi.deviceName, allocatedGPUs)
+
+			// Generate a unique pod UID for tracking
+			// Note: The Device Plugin API does not provide real pod UID in Allocate request.
+			// This placeholder UID is used for reconciler to track GPU assignments.
+			podUID := fmt.Sprintf("pod-%d", time.Now().UnixNano())
+
+			err := dpi.partitionMgr.ActivatePartitionForGPUs(allocatedGPUs, podUID)
+			if err != nil {
+				log.Printf("[%s] WARNING: Failed to activate FM partition: %v", dpi.deviceName, err)
+				log.Printf("[%s] Allocation will proceed but NVLink may not be active", dpi.deviceName)
+				// Don't fail allocation - let VM start, NVLink might work with manual activation
+				// In production, you may want to return error here:
+				// return nil, fmt.Errorf("failed to activate FM partition: %w", err)
+			} else {
+				log.Printf("[%s] FM partition activated successfully for NVLink", dpi.deviceName)
+				// Track allocation for reconciler to detect pod deletion
+				dpi.partitionMgr.TrackAllocation(podUID, allocatedGPUs)
+			}
+		}
+	}
+
 	return &responses, nil
 }
 
@@ -384,8 +427,19 @@ func (dpi *GenericDevicePlugin) PreStartContainer(ctx context.Context, in *plugi
 // GetPreferredAllocation returns a preferred set of devices to allocate
 // from a list of available ones. This helps the Topology Manager make
 // topology-aware allocation decisions based on NUMA affinity.
+//
+// PARTITION-FIRST SELECTION:
+// When Fabric Manager is enabled, ALL allocated GPUs must come from a SINGLE partition.
+// Partitions are ranked by NUMA locality (fewer NUMA nodes = better).
+// If no valid partition is available, allocation will fail.
 func (dpi *GenericDevicePlugin) GetPreferredAllocation(ctx context.Context, in *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
 	log.Printf("[%s] GetPreferredAllocation called with %d container request(s)", dpi.deviceName, len(in.ContainerRequests))
+
+	// IMPORTANT: Reconcile BEFORE allocation to clean up orphaned partitions
+	// This fixes race condition where old pod's partition is still marked active
+	if dpi.partitionMgr != nil {
+		dpi.partitionMgr.ReconcileNow()
+	}
 
 	response := &pluginapi.PreferredAllocationResponse{}
 
@@ -400,90 +454,160 @@ func (dpi *GenericDevicePlugin) GetPreferredAllocation(ctx context.Context, in *
 				deviceToNUMA[dev.ID] = dev.Topology.Nodes[0].ID
 			}
 		}
-		getNUMANode := func(deviceID string) int64 {
-			if node, ok := deviceToNUMA[deviceID]; ok {
-				return node
-			}
-			return -1
+
+		// Build set of available devices for quick lookup
+		availableSet := make(map[string]bool)
+		for _, d := range req.AvailableDeviceIDs {
+			availableSet[d] = true
 		}
 
-		// Group available devices by NUMA node while preserving iteration order
-		numaToDevices := make(map[int64][]string)
-		var nodeOrder []int64
-		nodeSeen := make(map[int64]struct{})
-		for _, deviceID := range req.AvailableDeviceIDs {
-			numaNode := getNUMANode(deviceID)
-			numaToDevices[numaNode] = append(numaToDevices[numaNode], deviceID)
-			if _, ok := nodeSeen[numaNode]; !ok {
-				nodeOrder = append(nodeOrder, numaNode)
-				nodeSeen[numaNode] = struct{}{}
-			}
-		}
-
-		// Prefer devices from the same NUMA node
 		var preferredDevices []string
-		preferredSet := make(map[string]struct{})
-		selectedPerNode := make(map[int64]int)
-		addDevice := func(deviceID string) {
-			if _, exists := preferredSet[deviceID]; exists {
-				return
-			}
-			preferredSet[deviceID] = struct{}{}
-			numaNode := getNUMANode(deviceID)
-			selectedPerNode[numaNode]++
-			preferredDevices = append(preferredDevices, deviceID)
-		}
 
-		// Always place must-include devices first
-		selectedNodeOrder := []int64{}
-		selectedNodeSeen := make(map[int64]struct{})
-		for _, deviceID := range req.MustIncludeDeviceIDs {
-			if _, exists := preferredSet[deviceID]; exists {
-				continue
-			}
-			addDevice(deviceID)
-			numaNode := getNUMANode(deviceID)
-			if _, ok := selectedNodeSeen[numaNode]; !ok {
-				selectedNodeOrder = append(selectedNodeOrder, numaNode)
-				selectedNodeSeen[numaNode] = struct{}{}
-			}
-		}
+		// ========== PARTITION-FIRST SELECTION (NVLink support) ==========
+		if dpi.partitionMgr != nil {
+			log.Printf("[%s] Using partition-first selection for NVLink support", dpi.deviceName)
+			tree := dpi.partitionMgr.GetTree()
 
-		if len(preferredDevices) > int(req.AllocationSize) {
-			return nil, fmt.Errorf("number of MustIncludeDeviceIDs (%d) exceeds allocation size (%d)",
-				len(preferredDevices), req.AllocationSize)
-		}
+			// Get all available partitions of the requested size
+			availablePartitions := tree.GetAvailablePartitions(int(req.AllocationSize))
+			log.Printf("[%s] Found %d partition(s) of size %d", dpi.deviceName, len(availablePartitions), req.AllocationSize)
 
-		// First, try to satisfy the request from a single NUMA node (including already selected devices)
-		if len(preferredDevices) < int(req.AllocationSize) {
-			targetNode := int64(-1)
-			var candidateNodes []int64
-			candidateNodes = append(candidateNodes, selectedNodeOrder...)
-			for _, node := range nodeOrder {
-				if _, seen := selectedNodeSeen[node]; seen {
+			// Filter to partitions where ALL GPUs are available
+			type scoredPartition struct {
+				partition *fm.Partition
+				gpus      []string
+				numaNodes map[int64]bool
+				numaCount int
+			}
+			var candidates []scoredPartition
+
+			for _, p := range availablePartitions {
+				gpus, err := tree.GetGPUsForPartition(p.ID)
+				if err != nil {
+					log.Printf("[%s] Error getting GPUs for partition %d: %v", dpi.deviceName, p.ID, err)
 					continue
 				}
-				candidateNodes = append(candidateNodes, node)
-			}
 
-			for _, numaNode := range candidateNodes {
-				availableOnNode := 0
-				for _, deviceID := range numaToDevices[numaNode] {
-					if _, exists := preferredSet[deviceID]; !exists {
-						availableOnNode++
+				// Check if all partition GPUs are available
+				allAvailable := true
+				for _, gpu := range gpus {
+					if !availableSet[gpu] {
+						allAvailable = false
+						break
 					}
 				}
-				totalOnNode := selectedPerNode[numaNode] + availableOnNode
-				if totalOnNode >= int(req.AllocationSize) {
-					log.Printf("[%s] Selecting NUMA node %d (have %d selected, %d available) to satisfy %d devices",
-						dpi.deviceName, numaNode, selectedPerNode[numaNode], availableOnNode, req.AllocationSize)
-					targetNode = numaNode
+				if !allAvailable {
+					log.Printf("[%s] Partition %d skipped: not all GPUs available", dpi.deviceName, p.ID)
+					continue
+				}
+
+				// Check MustInclude constraint: all MustInclude devices must be in this partition
+				if len(req.MustIncludeDeviceIDs) > 0 {
+					gpuSet := make(map[string]bool)
+					for _, g := range gpus {
+						gpuSet[g] = true
+					}
+					allIncluded := true
+					for _, mustInclude := range req.MustIncludeDeviceIDs {
+						if !gpuSet[mustInclude] {
+							allIncluded = false
+							break
+						}
+					}
+					if !allIncluded {
+						log.Printf("[%s] Partition %d skipped: MustInclude devices not in partition", dpi.deviceName, p.ID)
+						continue
+					}
+				}
+
+				// Calculate NUMA locality score (fewer unique NUMA nodes = better)
+				numaNodes := make(map[int64]bool)
+				for _, gpu := range gpus {
+					if node, ok := deviceToNUMA[gpu]; ok {
+						numaNodes[node] = true
+					}
+				}
+
+				candidates = append(candidates, scoredPartition{
+					partition: p,
+					gpus:      gpus,
+					numaNodes: numaNodes,
+					numaCount: len(numaNodes),
+				})
+				log.Printf("[%s] Partition %d is a candidate (GPUs: %v, NUMA nodes: %d)",
+					dpi.deviceName, p.ID, gpus, len(numaNodes))
+			}
+
+			if len(candidates) == 0 {
+				// FM is enabled but no valid partition found - this is a HARD ERROR
+				return nil, fmt.Errorf("[%s] no available partition of size %d with all GPUs available - cannot proceed without valid NVLink partition",
+					dpi.deviceName, req.AllocationSize)
+			}
+
+			// Sort by NUMA count (ascending), then by partition ID for determinism
+			sort.Slice(candidates, func(i, j int) bool {
+				if candidates[i].numaCount != candidates[j].numaCount {
+					return candidates[i].numaCount < candidates[j].numaCount
+				}
+				return candidates[i].partition.ID < candidates[j].partition.ID
+			})
+
+			best := candidates[0]
+			log.Printf("[%s] Selected partition %d with %d NUMA node(s): %v",
+				dpi.deviceName, best.partition.ID, best.numaCount, best.gpus)
+			preferredDevices = best.gpus[:int(req.AllocationSize)]
+		}
+
+		// ========== FALLBACK: NUMA-ONLY SELECTION (only when FM is disabled) ==========
+		if len(preferredDevices) == 0 && dpi.partitionMgr == nil {
+			log.Printf("[%s] Using NUMA-based selection (FM disabled)", dpi.deviceName)
+
+			// Group available devices by NUMA node
+			numaToDevices := make(map[int64][]string)
+			var nodeOrder []int64
+			nodeSeen := make(map[int64]struct{})
+			for _, deviceID := range req.AvailableDeviceIDs {
+				node := int64(-1)
+				if n, ok := deviceToNUMA[deviceID]; ok {
+					node = n
+				}
+				numaToDevices[node] = append(numaToDevices[node], deviceID)
+				if _, ok := nodeSeen[node]; !ok {
+					nodeOrder = append(nodeOrder, node)
+					nodeSeen[node] = struct{}{}
+				}
+			}
+
+			preferredSet := make(map[string]struct{})
+			addDevice := func(deviceID string) {
+				if _, exists := preferredSet[deviceID]; exists {
+					return
+				}
+				preferredSet[deviceID] = struct{}{}
+				preferredDevices = append(preferredDevices, deviceID)
+			}
+
+			// Add MustInclude devices first
+			for _, deviceID := range req.MustIncludeDeviceIDs {
+				addDevice(deviceID)
+			}
+
+			// Try to fill from single NUMA node
+			for _, node := range nodeOrder {
+				if len(numaToDevices[node]) >= int(req.AllocationSize) {
+					for _, deviceID := range numaToDevices[node] {
+						if len(preferredDevices) >= int(req.AllocationSize) {
+							break
+						}
+						addDevice(deviceID)
+					}
 					break
 				}
 			}
 
-			if targetNode != -1 {
-				for _, deviceID := range numaToDevices[targetNode] {
+			// If still not enough, take from any available
+			if len(preferredDevices) < int(req.AllocationSize) {
+				for _, deviceID := range req.AvailableDeviceIDs {
 					if len(preferredDevices) >= int(req.AllocationSize) {
 						break
 					}
@@ -492,28 +616,15 @@ func (dpi *GenericDevicePlugin) GetPreferredAllocation(ctx context.Context, in *
 			}
 		}
 
-		// If we couldn't fill the request from a single NUMA node, fall back to the kubelet-provided order
-		if len(preferredDevices) < int(req.AllocationSize) {
-			log.Printf("[%s] Using kubelet-provided device order to satisfy remaining slots (need %d more)",
-				dpi.deviceName, int(req.AllocationSize)-len(preferredDevices))
-			for _, deviceID := range req.AvailableDeviceIDs {
-				if len(preferredDevices) >= int(req.AllocationSize) {
-					break
-				}
-				addDevice(deviceID)
+		// Log final selection with NUMA info
+		var numaNodes []int64
+		for _, devID := range preferredDevices {
+			if node, ok := deviceToNUMA[devID]; ok {
+				numaNodes = append(numaNodes, node)
 			}
 		}
-
 		log.Printf("[%s] Preferred allocation for container %d: %v (NUMA nodes: %v)",
-			dpi.deviceName, idx, preferredDevices, func() []int64 {
-				var nodes []int64
-				for _, devID := range preferredDevices {
-					if node, ok := deviceToNUMA[devID]; ok {
-						nodes = append(nodes, node)
-					}
-				}
-				return nodes
-			}())
+			dpi.deviceName, idx, preferredDevices, numaNodes)
 
 		response.ContainerResponses = append(response.ContainerResponses,
 			&pluginapi.ContainerPreferredAllocationResponse{

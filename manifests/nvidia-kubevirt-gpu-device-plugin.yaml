@@ -13,23 +13,30 @@ spec:
         name: nvidia-kubevirt-gpu-dp-ds
     spec:
       priorityClassName: system-node-critical
+      hostNetwork: true # Required for FM API access on localhost:6666
       tolerations:
-      # Allow this pod to be rescheduled while the node is in "critical add-ons only" mode.
-      # This, along with the annotation above marks this pod as a critical add-on.
-      - key: CriticalAddonsOnly
-        operator: Exists
+        - operator: "Exists"
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
       containers:
-      - name: nvidia-kubevirt-gpu-dp-ctr
-        image: nvcr.io/nvidia/kubevirt-gpu-device-plugin:v1.4.0
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
-        volumeMounts:
-          - name: device-plugin
-            mountPath: /var/lib/kubelet/device-plugins
-          - name: vfio
-            mountPath: /dev/vfio
+        - name: nvidia-kubevirt-gpu-dp-ctr
+          image: docker.io/anurlan/kubevirt-gpu-device-plugin:v1.5.0-fm
+          imagePullPolicy: Always
+          args:
+            - "--fm-enabled=true"
+            - "--fm-address=127.0.0.1:6666"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: device-plugin
+              mountPath: /var/lib/kubelet/device-plugins
+            - name: vfio
+              mountPath: /dev/vfio
+            - name: sys
+              mountPath: /sys
+              readOnly: true
       volumes:
         - name: device-plugin
           hostPath:
@@ -37,3 +44,7 @@ spec:
         - name: vfio
           hostPath:
             path: /dev/vfio
+        - name: sys
+          hostPath:
+            path: /sys
+            type: Directory
