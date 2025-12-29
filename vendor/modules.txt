@@ -229,3 +229,4 @@ k8s.io/klog/v2/internal/sloghandler
 # k8s.io/kubelet v0.33.5
 ## explicit; go 1.24.0
 k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1
+k8s.io/kubelet/pkg/apis/podresources/v1
