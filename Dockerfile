@@ -56,7 +56,7 @@ COPY . .
 RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -o nvidia-kubevirt-gpu-device-plugin ./cmd
 
-FROM nvcr.io/nvidia/distroless/go:v3.1.11
+FROM nvcr.io/nvidia/distroless/go:v4.0.0
 
 ARG VERSION
 
