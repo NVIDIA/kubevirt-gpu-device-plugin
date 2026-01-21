@@ -24,23 +24,24 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-# syntax=docker/dockerfile:1.7
-FROM --platform=$TARGETPLATFORM nvcr.io/nvidia/cuda:12.9.1-base-ubi9 AS builder
 
-ARG TARGETOS
-ARG TARGETARCH
-ARG TARGETVARIANT
-ARG GOLANG_VERSION=1.24.0
+FROM nvcr.io/nvidia/cuda:12.9.1-base-ubi9 AS builder
 
-RUN yum install -y wget tar gzip make gcc glibc-devel \
- && case "$TARGETARCH" in \
-      amd64) GO_TARBALL=go${GOLANG_VERSION}.linux-amd64.tar.gz ;; \
-      arm64) GO_TARBALL=go${GOLANG_VERSION}.linux-arm64.tar.gz ;; \
-      *) echo "Unsupported TARGETARCH=${TARGETARCH}" && exit 1 ;; \
-    esac \
- && wget -nv -O /tmp/go.tgz https://go.dev/dl/${GO_TARBALL} \
- && tar -C /usr/local -xzf /tmp/go.tgz \
- && rm -f /tmp/go.tgz
+ARG GOLANG_VERSION
+
+RUN yum install -y wget tar gzip make gcc glibc-devel
+
+RUN set -eux; \
+    \
+    arch="$(uname -m)"; \
+    case "${arch##*-}" in \
+        x86_64 | amd64) ARCH='amd64' ;; \
+        ppc64el | ppc64le) ARCH='ppc64le' ;; \
+        aarch64) ARCH='arm64' ;; \
+        *) echo "unsupported architecture" ; exit 1 ;; \
+    esac; \
+    wget -nv -O - https://go.dev/dl/go${GOLANG_VERSION}.linux-${ARCH}.tar.gz \
+    | tar -C /usr/local -xz
 
 ENV GOROOT=/usr/local/go
 ENV GOPATH=/go
@@ -53,7 +54,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+RUN CGO_ENABLED=1 \
     go build -trimpath -o nvidia-kubevirt-gpu-device-plugin ./cmd
 
 FROM nvcr.io/nvidia/distroless/go:v3.1.11

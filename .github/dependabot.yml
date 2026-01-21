@@ -12,6 +12,6 @@ updates:
       - dependencies
 
   - package-ecosystem: "docker"
-    directory: "/"
+    directory: "/deployments/container"
     schedule:
       interval: "daily"

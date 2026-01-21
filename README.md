@@ -182,24 +182,27 @@ Example YAMLs for creating VMs with GPU/vGPU are in the `examples` folder
 
 ### Build
 
-Change to proper DOCKER_REPO and DOCKER_TAG env before building images
-e.g.
-```shell
-export DOCKER_REPO="quay.io/nvidia/kubevirt-gpu-device-plugin"
-export DOCKER_TAG=devel
-```
-
-Build executable binary using make
+Build executable binary using make:
 ```shell
 make
 ```
-Build docker image
+To build a container image, first export the following variables:
+e.g.
 ```shell
-make build-image DOCKER_REPO=<docker-repo-url> DOCKER_TAG=<image-tag>
+export IMAGE_NAME="quay.io/nvidia/kubevirt-gpu-device-plugin"
+export VERSION=devel
 ```
-Push docker image to a docker repo
+[Optional] To build a multi-arch container image, export the following variable:
 ```shell
-make push-image DOCKER_REPO=<docker-repo-url> DOCKER_TAG=<image-tag>
+export BUILD_MULTI_ARCH_IMAGES=true
+```
+Build container image:
+```shell
+make -f deployments/container/Makefile build
+```
+Push container image to container registry:
+```shell
+make -f deployments/container/Makefile push
 ```
 ### To Do
 - Improve the healthcheck mechanism for GPUs with VFIO-PCI drivers
