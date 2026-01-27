@@ -28,8 +28,18 @@
 FROM nvcr.io/nvidia/cuda:12.9.1-base-ubi9 AS builder
 
 ARG GOLANG_VERSION
+ARG DRIVER_VERSION
 
 RUN yum install -y wget tar gzip make gcc glibc-devel
+
+# Install Fabric Manager SDK for NVLink partition support
+# Setup NVIDIA network repository and install FM devel package
+RUN dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
+  && dnf clean expire-cache \
+  && DRIVER_STREAM=$(echo "${DRIVER_VERSION}" | cut -d. -f1) \
+  && dnf module enable -y nvidia-driver:${DRIVER_STREAM}-open/default \
+  && dnf install -y nvidia-fabric-manager-devel-${DRIVER_VERSION} \
+  && dnf clean all
 
 RUN set -eux; \
     \
@@ -55,7 +65,9 @@ RUN go mod download
 COPY . .
 
 RUN CGO_ENABLED=1 \
-    go build -trimpath -o nvidia-kubevirt-gpu-device-plugin ./cmd
+  CGO_CPPFLAGS="-I/usr/include" \
+  CGO_LDFLAGS="-L/usr/lib -lnvfm" \
+  go build -trimpath -tags=nvfm -o nvidia-kubevirt-gpu-device-plugin ./cmd
 
 FROM nvcr.io/nvidia/distroless/go:v4.0.0
 
@@ -71,6 +83,9 @@ LABEL description="See summary"
 
 COPY --from=builder /workspace/nvidia-kubevirt-gpu-device-plugin /usr/bin/
 COPY --from=builder /workspace/utils/pci.ids /usr/pci.ids
+COPY --from=builder /usr/lib64/libnvfm* /usr/lib64/
+
+ENV LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
 
 USER 0:0
 
