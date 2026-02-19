@@ -481,124 +481,39 @@ func (dpi *GenericDevicePlugin) PreStartContainer(ctx context.Context, in *plugi
 // GetPreferredAllocation returns a preferred set of devices to allocate
 // from a list of available ones. This helps the Topology Manager make
 // topology-aware allocation decisions based on NUMA affinity.
+// When fabric manager is active, it prefers devices that form a complete
+// FM partition of the exact requested size with the best NUMA locality.
 func (dpi *GenericDevicePlugin) GetPreferredAllocation(ctx context.Context, in *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
 	log.Printf("[%s] GetPreferredAllocation called with %d container request(s)", dpi.deviceName, len(in.ContainerRequests))
 
 	response := &pluginapi.PreferredAllocationResponse{}
 
+	// Build device-to-NUMA map for logging
+	deviceToNUMA := make(map[string]int64)
+	for _, dev := range dpi.devs {
+		if dev.Topology != nil && len(dev.Topology.Nodes) > 0 {
+			deviceToNUMA[dev.ID] = dev.Topology.Nodes[0].ID
+		}
+	}
+
 	for idx, req := range in.ContainerRequests {
 		log.Printf("[%s] Container request %d: Available devices=%v, MustInclude=%v, AllocationSize=%d",
 			dpi.deviceName, idx, req.AvailableDeviceIDs, req.MustIncludeDeviceIDs, req.AllocationSize)
 
-		// Build a map of device ID to NUMA node from our device list
-		deviceToNUMA := make(map[string]int64)
-		for _, dev := range dpi.devs {
-			if dev.Topology != nil && len(dev.Topology.Nodes) > 0 {
-				deviceToNUMA[dev.ID] = dev.Topology.Nodes[0].ID
-			}
-		}
-		getNUMANode := func(deviceID string) int64 {
-			if node, ok := deviceToNUMA[deviceID]; ok {
-				return node
-			}
-			return -1
-		}
-
-		// Group available devices by NUMA node while preserving iteration order
-		numaToDevices := make(map[int64][]string)
-		var nodeOrder []int64
-		nodeSeen := make(map[int64]struct{})
-		for _, deviceID := range req.AvailableDeviceIDs {
-			numaNode := getNUMANode(deviceID)
-			numaToDevices[numaNode] = append(numaToDevices[numaNode], deviceID)
-			if _, ok := nodeSeen[numaNode]; !ok {
-				nodeOrder = append(nodeOrder, numaNode)
-				nodeSeen[numaNode] = struct{}{}
-			}
-		}
-
-		// Prefer devices from the same NUMA node
 		var preferredDevices []string
-		preferredSet := make(map[string]struct{})
-		selectedPerNode := make(map[int64]int)
-		addDevice := func(deviceID string) {
-			if _, exists := preferredSet[deviceID]; exists {
-				return
-			}
-			preferredSet[deviceID] = struct{}{}
-			numaNode := getNUMANode(deviceID)
-			selectedPerNode[numaNode]++
-			preferredDevices = append(preferredDevices, deviceID)
+		var err error
+
+		if dpi.partitionManager != nil {
+			preferredDevices, err = dpi.partitionManager.SelectPreferred(ctx, &fabricmanager.SelectPreferredRequest{
+				AvailableDeviceIDs:   req.AvailableDeviceIDs,
+				MustIncludeDeviceIDs: req.MustIncludeDeviceIDs,
+				AllocationSize:       int(req.AllocationSize),
+			})
+		} else {
+			preferredDevices, err = dpi.preferDevicesByNUMA(req)
 		}
-
-		// Always place must-include devices first
-		selectedNodeOrder := []int64{}
-		selectedNodeSeen := make(map[int64]struct{})
-		for _, deviceID := range req.MustIncludeDeviceIDs {
-			if _, exists := preferredSet[deviceID]; exists {
-				continue
-			}
-			addDevice(deviceID)
-			numaNode := getNUMANode(deviceID)
-			if _, ok := selectedNodeSeen[numaNode]; !ok {
-				selectedNodeOrder = append(selectedNodeOrder, numaNode)
-				selectedNodeSeen[numaNode] = struct{}{}
-			}
-		}
-
-		if len(preferredDevices) > int(req.AllocationSize) {
-			return nil, fmt.Errorf("number of MustIncludeDeviceIDs (%d) exceeds allocation size (%d)",
-				len(preferredDevices), req.AllocationSize)
-		}
-
-		// First, try to satisfy the request from a single NUMA node (including already selected devices)
-		if len(preferredDevices) < int(req.AllocationSize) {
-			targetNode := int64(-1)
-			var candidateNodes []int64
-			candidateNodes = append(candidateNodes, selectedNodeOrder...)
-			for _, node := range nodeOrder {
-				if _, seen := selectedNodeSeen[node]; seen {
-					continue
-				}
-				candidateNodes = append(candidateNodes, node)
-			}
-
-			for _, numaNode := range candidateNodes {
-				availableOnNode := 0
-				for _, deviceID := range numaToDevices[numaNode] {
-					if _, exists := preferredSet[deviceID]; !exists {
-						availableOnNode++
-					}
-				}
-				totalOnNode := selectedPerNode[numaNode] + availableOnNode
-				if totalOnNode >= int(req.AllocationSize) {
-					log.Printf("[%s] Selecting NUMA node %d (have %d selected, %d available) to satisfy %d devices",
-						dpi.deviceName, numaNode, selectedPerNode[numaNode], availableOnNode, req.AllocationSize)
-					targetNode = numaNode
-					break
-				}
-			}
-
-			if targetNode != -1 {
-				for _, deviceID := range numaToDevices[targetNode] {
-					if len(preferredDevices) >= int(req.AllocationSize) {
-						break
-					}
-					addDevice(deviceID)
-				}
-			}
-		}
-
-		// If we couldn't fill the request from a single NUMA node, fall back to the kubelet-provided order
-		if len(preferredDevices) < int(req.AllocationSize) {
-			log.Printf("[%s] Using kubelet-provided device order to satisfy remaining slots (need %d more)",
-				dpi.deviceName, int(req.AllocationSize)-len(preferredDevices))
-			for _, deviceID := range req.AvailableDeviceIDs {
-				if len(preferredDevices) >= int(req.AllocationSize) {
-					break
-				}
-				addDevice(deviceID)
-			}
+		if err != nil {
+			return nil, err
 		}
 
 		log.Printf("[%s] Preferred allocation for container %d: %v (NUMA nodes: %v)",
@@ -619,6 +534,125 @@ func (dpi *GenericDevicePlugin) GetPreferredAllocation(ctx context.Context, in *
 	}
 
 	return response, nil
+}
+
+// preferDevicesByNUMA selects preferred devices based on NUMA node locality.
+// It prefers devices from the same NUMA node and falls back to kubelet-provided order.
+func (dpi *GenericDevicePlugin) preferDevicesByNUMA(
+	req *pluginapi.ContainerPreferredAllocationRequest,
+) ([]string, error) {
+	// Build a map of device ID to NUMA node from our device list
+	deviceToNUMA := make(map[string]int64)
+	for _, dev := range dpi.devs {
+		if dev.Topology != nil && len(dev.Topology.Nodes) > 0 {
+			deviceToNUMA[dev.ID] = dev.Topology.Nodes[0].ID
+		}
+	}
+	getNUMANode := func(deviceID string) int64 {
+		if node, ok := deviceToNUMA[deviceID]; ok {
+			return node
+		}
+		return -1
+	}
+
+	// Group available devices by NUMA node while preserving iteration order
+	numaToDevices := make(map[int64][]string)
+	var nodeOrder []int64
+	nodeSeen := make(map[int64]struct{})
+	for _, deviceID := range req.AvailableDeviceIDs {
+		numaNode := getNUMANode(deviceID)
+		numaToDevices[numaNode] = append(numaToDevices[numaNode], deviceID)
+		if _, ok := nodeSeen[numaNode]; !ok {
+			nodeOrder = append(nodeOrder, numaNode)
+			nodeSeen[numaNode] = struct{}{}
+		}
+	}
+
+	// Prefer devices from the same NUMA node
+	var preferredDevices []string
+	preferredSet := make(map[string]struct{})
+	selectedPerNode := make(map[int64]int)
+	addDevice := func(deviceID string) {
+		if _, exists := preferredSet[deviceID]; exists {
+			return
+		}
+		preferredSet[deviceID] = struct{}{}
+		numaNode := getNUMANode(deviceID)
+		selectedPerNode[numaNode]++
+		preferredDevices = append(preferredDevices, deviceID)
+	}
+
+	// Always place must-include devices first
+	selectedNodeOrder := []int64{}
+	selectedNodeSeen := make(map[int64]struct{})
+	for _, deviceID := range req.MustIncludeDeviceIDs {
+		if _, exists := preferredSet[deviceID]; exists {
+			continue
+		}
+		addDevice(deviceID)
+		numaNode := getNUMANode(deviceID)
+		if _, ok := selectedNodeSeen[numaNode]; !ok {
+			selectedNodeOrder = append(selectedNodeOrder, numaNode)
+			selectedNodeSeen[numaNode] = struct{}{}
+		}
+	}
+
+	if len(preferredDevices) > int(req.AllocationSize) {
+		return nil, fmt.Errorf("number of MustIncludeDeviceIDs (%d) exceeds allocation size (%d)",
+			len(preferredDevices), req.AllocationSize)
+	}
+
+	// First, try to satisfy the request from a single NUMA node (including already selected devices)
+	if len(preferredDevices) < int(req.AllocationSize) {
+		targetNode := int64(-1)
+		var candidateNodes []int64
+		candidateNodes = append(candidateNodes, selectedNodeOrder...)
+		for _, node := range nodeOrder {
+			if _, seen := selectedNodeSeen[node]; seen {
+				continue
+			}
+			candidateNodes = append(candidateNodes, node)
+		}
+
+		for _, numaNode := range candidateNodes {
+			availableOnNode := 0
+			for _, deviceID := range numaToDevices[numaNode] {
+				if _, exists := preferredSet[deviceID]; !exists {
+					availableOnNode++
+				}
+			}
+			totalOnNode := selectedPerNode[numaNode] + availableOnNode
+			if totalOnNode >= int(req.AllocationSize) {
+				log.Printf("[%s] Selecting NUMA node %d (have %d selected, %d available) to satisfy %d devices",
+					dpi.deviceName, numaNode, selectedPerNode[numaNode], availableOnNode, req.AllocationSize)
+				targetNode = numaNode
+				break
+			}
+		}
+
+		if targetNode != -1 {
+			for _, deviceID := range numaToDevices[targetNode] {
+				if len(preferredDevices) >= int(req.AllocationSize) {
+					break
+				}
+				addDevice(deviceID)
+			}
+		}
+	}
+
+	// If we couldn't fill the request from a single NUMA node, fall back to the kubelet-provided order
+	if len(preferredDevices) < int(req.AllocationSize) {
+		log.Printf("[%s] Using kubelet-provided device order to satisfy remaining slots (need %d more)",
+			dpi.deviceName, int(req.AllocationSize)-len(preferredDevices))
+		for _, deviceID := range req.AvailableDeviceIDs {
+			if len(preferredDevices) >= int(req.AllocationSize) {
+				break
+			}
+			addDevice(deviceID)
+		}
+	}
+
+	return preferredDevices, nil
 }
 
 // Health check of GPU devices
