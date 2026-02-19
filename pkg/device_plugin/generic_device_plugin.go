@@ -38,6 +38,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,6 +46,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
+
+	"kubevirt-gpu-device-plugin/pkg/fabricmanager"
 )
 
 const (
@@ -56,27 +59,45 @@ const (
 	vgpuPrefix        = "MDEV_PCI_RESOURCE_NVIDIA_COM"
 )
 
-var returnIommuMap = getIommuMap
-var returnBdfToIommuMap = getBdfToIommuMap
+var (
+	returnIommuMap      = getIommuMap
+	returnBdfToIommuMap = getBdfToIommuMap
+
+	pciModuleMappingPath = "/run/nvidia-fabricmanager/gpu-pci-module-mapping.json"
+)
+
+// isFabricManagerEnabled returns true if fabric manager integration is enabled
+// via the ENABLE_FABRIC_MANAGER environment variable.
+func isFabricManagerEnabled() bool {
+	envVar := os.Getenv("ENABLE_FABRIC_MANAGER")
+	enabled, _ := strconv.ParseBool(envVar)
+	return enabled
+}
 
 // Implements the kubernetes device plugin API
 type GenericDevicePlugin struct {
-	devs       []*pluginapi.Device
-	server     *grpc.Server
-	socketPath string
-	stop       chan struct{} // this channel signals to stop the DP
-	term       chan bool     // this channel detects kubelet restarts
-	healthy    chan string
-	unhealthy  chan string
-	devicePath string
-	deviceName string
-	devsHealth []*pluginapi.Device
+	devs             []*pluginapi.Device
+	server           *grpc.Server
+	socketPath       string
+	stop             chan struct{} // this channel signals to stop the DP
+	term             chan bool     // this channel detects kubelet restarts
+	healthy          chan string
+	unhealthy        chan string
+	devicePath       string
+	deviceName       string
+	devsHealth       []*pluginapi.Device
+	fmEnabled        bool
+	partitionManager *fabricmanager.PartitionManager
 }
 
 // Returns an initialized instance of GenericDevicePlugin
 func NewGenericDevicePlugin(deviceName string, devicePath string, devices []*pluginapi.Device) *GenericDevicePlugin {
 	log.Println("Devicename " + deviceName)
 	serverSock := fmt.Sprintf(pluginapi.DevicePluginPath+"kubevirt-%s.sock", deviceName)
+
+	fmEnabled := isFabricManagerEnabled()
+	log.Printf("[%s] Fabric manager integration enabled: %t", deviceName, fmEnabled)
+
 	dpi := &GenericDevicePlugin{
 		devs:       devices,
 		socketPath: serverSock,
@@ -85,6 +106,7 @@ func NewGenericDevicePlugin(deviceName string, devicePath string, devices []*plu
 		unhealthy:  make(chan string),
 		deviceName: deviceName,
 		devicePath: devicePath,
+		fmEnabled:  fmEnabled,
 	}
 	return dpi
 }
@@ -139,9 +161,73 @@ func (dpi *GenericDevicePlugin) Start(stop chan struct{}) error {
 		return err
 	}
 
+	// Attempt fabric manager connection if enabled
+	if dpi.fmEnabled {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		fmConfig := &fabricmanager.Config{
+			AddressInfo: "/run/nvidia-fabricmanager/fmpm.sock",
+			AddressType: fabricmanager.AddressTypeUnix,
+			TimeoutMs:   5000,
+			MaxRetries:  3,
+			RetryDelay:  time.Second * 2,
+			Debug:       false,
+		}
+		fmClient := fabricmanager.NewClient(fmConfig)
+
+		if err := fmClient.Connect(ctx); err != nil {
+			log.Printf("WARNING: Fabric manager enabled but connection failed: %v", err)
+			log.Print("Falling back to legacy device plugin mode")
+		} else {
+			log.Print("Fabric manager connected successfully")
+
+			// Load PCI-to-module mapping
+			pciToModule, moduleToPCI, mapErr := fabricmanager.LoadPCIModuleMapping(pciModuleMappingPath)
+			if mapErr != nil {
+				log.Printf("WARNING: Failed to load PCI module mapping: %v", mapErr)
+				log.Print("Falling back to legacy device plugin mode")
+			} else {
+				log.Printf("Loaded PCI-to-module mapping with %d entries", len(pciToModule))
+
+				// Build device NUMA map from device list
+				deviceNUMAMap := make(map[string]int64, len(dpi.devs))
+				for _, dev := range dpi.devs {
+					if dev.Topology != nil && len(dev.Topology.Nodes) > 0 {
+						deviceNUMAMap[dev.ID] = dev.Topology.Nodes[0].ID
+					}
+				}
+
+				dpi.partitionManager = fabricmanager.NewPartitionManager(
+					fmClient, pciToModule, moduleToPCI, deviceNUMAMap,
+				)
+
+				// List and log partition information
+				partitions, err := dpi.partitionManager.GetPartitions(ctx)
+				if err != nil {
+					log.Printf("WARNING: Failed to retrieve fabric partitions: %v", err)
+				} else {
+					log.Printf("INFO: Discovered %d fabric partitions (max: %d):", partitions.NumPartitions, partitions.MaxNumPartitions)
+
+					for _, partition := range partitions.Partitions {
+						status := "inactive"
+						if partition.IsActive {
+							status = "active"
+						}
+						log.Printf("INFO: Partition ID %d: %s, GPUs: %d", partition.PartitionID, status, partition.NumGPUs)
+
+						for _, gpu := range partition.GPUs {
+							log.Printf("INFO:   GPU %d: NVLinks=%d/%d", gpu.PhysicalID, gpu.NumNVLinksAvailable, gpu.MaxNumNVLinks)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	sock, err := net.Listen("unix", dpi.socketPath)
 	if err != nil {
-		log.Printf("[%s] Error creating GRPC server socket: %v", dpi.deviceName, err)
+		log.Printf("Error creating GRPC server socket: %v", err)
 		return err
 	}
 
@@ -180,6 +266,17 @@ func (dpi *GenericDevicePlugin) Stop() error {
 
 	dpi.server.Stop()
 	dpi.server = nil
+
+	// Disconnect from fabric manager if connected
+	if dpi.partitionManager != nil {
+		if err := dpi.partitionManager.Disconnect(); err != nil {
+			log.Printf("[%s] WARNING: Error disconnecting from fabric manager: %v",
+				dpi.deviceName, err)
+		} else {
+			log.Printf("[%s] Fabric manager disconnected successfully", dpi.deviceName)
+		}
+		dpi.partitionManager = nil
+	}
 
 	return dpi.cleanup()
 }

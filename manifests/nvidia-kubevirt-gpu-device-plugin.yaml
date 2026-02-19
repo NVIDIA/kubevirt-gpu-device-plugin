@@ -21,6 +21,13 @@ spec:
       containers:
       - name: nvidia-kubevirt-gpu-dp-ctr
         image: nvcr.io/nvidia/kubevirt-gpu-device-plugin:v1.4.0
+        env:
+        # Fabric Manager Integration (Tech Preview)
+        # Set to "true" to enable fabric manager partition coordination
+        # Requires fabric manager daemon running on the node
+        # Defaults to "false" - device plugin works normally without it
+        - name: ENABLE_FABRIC_MANAGER
+          value: "false"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
