@@ -272,11 +272,11 @@ var _ = Describe("Generic Device", func() {
 
 // mockFMClient is a mock implementation of fabricmanager.Client for testing.
 type mockFMClient struct {
-	partitions  *fabricmanager.PartitionList
-	err         error
-	activatedID uint32
-	activateErr error
-	connected   bool
+	partitions   *fabricmanager.PartitionList
+	err          error
+	activatedIDs []uint32
+	activateErr  error
+	connected    bool
 }
 
 func (m *mockFMClient) Connect(ctx context.Context) error { return nil }
@@ -286,7 +286,7 @@ func (m *mockFMClient) GetPartition(ctx context.Context, partitionID uint32) (*f
 	return nil, nil
 }
 func (m *mockFMClient) ActivatePartition(ctx context.Context, req *fabricmanager.ActivateRequest) error {
-	m.activatedID = req.PartitionID
+	m.activatedIDs = append(m.activatedIDs, req.PartitionID)
 	return m.activateErr
 }
 func (m *mockFMClient) DeactivatePartition(ctx context.Context, partitionID uint32) error {

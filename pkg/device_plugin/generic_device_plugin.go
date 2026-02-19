@@ -452,6 +452,23 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 		responses.ContainerResponses = append(responses.ContainerResponses, &response)
 	}
 
+	// Activate fabric manager partitions per container request.
+	// Each container's devices are activated independently so that each set
+	// matches its own partition size, avoiding over-constraining multi-container pods.
+	if dpi.partitionManager != nil {
+		if !dpi.partitionManager.IsConnected() {
+			return nil, fmt.Errorf("fabric manager is enabled but connection lost")
+		}
+
+		for i, req := range reqs.ContainerRequests {
+			if err := dpi.partitionManager.ActivateForDevices(ctx, req.DevicesIDs); err != nil {
+				log.Printf("ERROR: Fabric partition activation failed for container %d: %v", i, err)
+				return nil, fmt.Errorf("fabric manager partition activation failed for container %d: %w", i, err)
+			}
+			log.Printf("Fabric partition activated successfully for container %d devices: %v", i, req.DevicesIDs)
+		}
+	}
+
 	return &responses, nil
 }
 
