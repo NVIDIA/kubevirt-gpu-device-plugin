@@ -40,6 +40,8 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/grpc"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
+
+	"kubevirt-gpu-device-plugin/pkg/fabricmanager"
 )
 
 var devices []*pluginapi.Device
@@ -266,5 +268,362 @@ var _ = Describe("Generic Device", func() {
 		Expect(devices[1].ID).To(Equal(pciAddress2))
 		Expect(devices[0].Health).To(Equal(pluginapi.Healthy))
 		Expect(devices[1].Health).To(Equal(pluginapi.Healthy))
+	})
+})
+
+// mockFMClient is a mock implementation of fabricmanager.Client for testing.
+type mockFMClient struct {
+	partitions  *fabricmanager.PartitionList
+	err         error
+	activatedID uint32
+	activateErr error
+	connected   bool
+}
+
+func (m *mockFMClient) Connect(ctx context.Context) error { return nil }
+func (m *mockFMClient) Disconnect() error                 { return nil }
+func (m *mockFMClient) IsConnected() bool                 { return m.connected }
+func (m *mockFMClient) GetPartition(ctx context.Context, partitionID uint32) (*fabricmanager.Partition, error) {
+	return nil, nil
+}
+func (m *mockFMClient) ActivatePartition(ctx context.Context, req *fabricmanager.ActivateRequest) error {
+	m.activatedID = req.PartitionID
+	return m.activateErr
+}
+func (m *mockFMClient) DeactivatePartition(ctx context.Context, partitionID uint32) error {
+	return nil
+}
+func (m *mockFMClient) GetPartitionForDevices(ctx context.Context, deviceIDs []string) (*fabricmanager.Partition, error) {
+	return nil, nil
+}
+func (m *mockFMClient) GetPartitions(ctx context.Context) (*fabricmanager.PartitionList, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.partitions, nil
+}
+
+var _ = Describe("GetPreferredAllocation() FM Tests", func() {
+	buildDevice := func(id string, node int64) *pluginapi.Device {
+		return &pluginapi.Device{
+			ID:     id,
+			Health: pluginapi.Healthy,
+			Topology: &pluginapi.TopologyInfo{
+				Nodes: []*pluginapi.NUMANode{
+					{ID: node},
+				},
+			},
+		}
+	}
+
+	// pciToPhysical maps test PCI device names to unique physical module IDs.
+	pciToPhysical := map[string]uint32{
+		"gpu0": 0, "gpu1": 1, "gpu2": 2, "gpu3": 3,
+	}
+
+	// buildModuleMaps returns pciToModuleID and moduleIDToPCI maps for the test devices.
+	buildModuleMaps := func() (map[string]uint32, map[uint32]string) {
+		forward := make(map[string]uint32)
+		reverse := make(map[uint32]string)
+		for pci, mod := range pciToPhysical {
+			forward[pci] = mod
+			reverse[mod] = pci
+		}
+		return forward, reverse
+	}
+
+	// buildDeviceNUMAMap returns a map from device ID to NUMA node for the given devices.
+	buildDeviceNUMAMap := func(devs []*pluginapi.Device) map[string]int64 {
+		m := make(map[string]int64, len(devs))
+		for _, dev := range devs {
+			if dev.Topology != nil && len(dev.Topology.Nodes) > 0 {
+				m[dev.ID] = dev.Topology.Nodes[0].ID
+			}
+		}
+		return m
+	}
+
+	buildPartition := func(id uint32, pciBusIDs ...string) fabricmanager.Partition {
+		gpus := make([]fabricmanager.GPU, len(pciBusIDs))
+		for i, bdf := range pciBusIDs {
+			gpus[i] = fabricmanager.GPU{PCIBusID: bdf, PhysicalID: pciToPhysical[bdf]}
+		}
+		return fabricmanager.Partition{
+			PartitionID: id,
+			NumGPUs:     uint32(len(pciBusIDs)),
+			GPUs:        gpus,
+		}
+	}
+
+	It("selects the single matching FM partition", func() {
+		mock := &mockFMClient{
+			partitions: &fabricmanager.PartitionList{
+				NumPartitions: 1,
+				Partitions: []fabricmanager.Partition{
+					buildPartition(1, "gpu0", "gpu1"),
+				},
+			},
+		}
+		fwd, rev := buildModuleMaps()
+		devs := []*pluginapi.Device{
+			buildDevice("gpu0", 0),
+			buildDevice("gpu1", 0),
+			buildDevice("gpu2", 1),
+			buildDevice("gpu3", 1),
+		}
+		dpi := &GenericDevicePlugin{
+			deviceName:       "test",
+			partitionManager: fabricmanager.NewPartitionManager(mock, fwd, rev, buildDeviceNUMAMap(devs)),
+			devs:             devs,
+		}
+
+		request := &pluginapi.PreferredAllocationRequest{
+			ContainerRequests: []*pluginapi.ContainerPreferredAllocationRequest{
+				{
+					AvailableDeviceIDs: []string{"gpu0", "gpu1", "gpu2", "gpu3"},
+					AllocationSize:     2,
+				},
+			},
+		}
+
+		resp, err := dpi.GetPreferredAllocation(context.Background(), request)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(resp.ContainerResponses).To(HaveLen(1))
+		Expect(resp.ContainerResponses[0].DeviceIDs).To(Equal([]string{"gpu0", "gpu1"}))
+	})
+
+	It("picks the partition with fewest NUMA nodes", func() {
+		mock := &mockFMClient{
+			partitions: &fabricmanager.PartitionList{
+				NumPartitions: 2,
+				Partitions: []fabricmanager.Partition{
+					// Partition 1: GPUs span NUMA 0 and 1
+					buildPartition(1, "gpu0", "gpu2"),
+					// Partition 2: GPUs both on NUMA 1
+					buildPartition(2, "gpu2", "gpu3"),
+				},
+			},
+		}
+		fwd, rev := buildModuleMaps()
+		devs := []*pluginapi.Device{
+			buildDevice("gpu0", 0),
+			buildDevice("gpu1", 0),
+			buildDevice("gpu2", 1),
+			buildDevice("gpu3", 1),
+		}
+		dpi := &GenericDevicePlugin{
+			deviceName:       "test",
+			partitionManager: fabricmanager.NewPartitionManager(mock, fwd, rev, buildDeviceNUMAMap(devs)),
+			devs:             devs,
+		}
+
+		request := &pluginapi.PreferredAllocationRequest{
+			ContainerRequests: []*pluginapi.ContainerPreferredAllocationRequest{
+				{
+					AvailableDeviceIDs: []string{"gpu0", "gpu1", "gpu2", "gpu3"},
+					AllocationSize:     2,
+				},
+			},
+		}
+
+		resp, err := dpi.GetPreferredAllocation(context.Background(), request)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(resp.ContainerResponses).To(HaveLen(1))
+		// Partition 2 is preferred (both GPUs on NUMA 1, single node)
+		Expect(resp.ContainerResponses[0].DeviceIDs).To(Equal([]string{"gpu2", "gpu3"}))
+	})
+
+	It("tie-breaks by lowest NUMA node ID when distinct node count is equal", func() {
+		mock := &mockFMClient{
+			partitions: &fabricmanager.PartitionList{
+				NumPartitions: 2,
+				Partitions: []fabricmanager.Partition{
+					// Partition 1: GPUs both on NUMA 1
+					buildPartition(1, "gpu2", "gpu3"),
+					// Partition 2: GPUs both on NUMA 0
+					buildPartition(2, "gpu0", "gpu1"),
+				},
+			},
+		}
+		fwd, rev := buildModuleMaps()
+		devs := []*pluginapi.Device{
+			buildDevice("gpu0", 0),
+			buildDevice("gpu1", 0),
+			buildDevice("gpu2", 1),
+			buildDevice("gpu3", 1),
+		}
+		dpi := &GenericDevicePlugin{
+			deviceName:       "test",
+			partitionManager: fabricmanager.NewPartitionManager(mock, fwd, rev, buildDeviceNUMAMap(devs)),
+			devs:             devs,
+		}
+
+		request := &pluginapi.PreferredAllocationRequest{
+			ContainerRequests: []*pluginapi.ContainerPreferredAllocationRequest{
+				{
+					AvailableDeviceIDs: []string{"gpu0", "gpu1", "gpu2", "gpu3"},
+					AllocationSize:     2,
+				},
+			},
+		}
+
+		resp, err := dpi.GetPreferredAllocation(context.Background(), request)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(resp.ContainerResponses).To(HaveLen(1))
+		// Partition 2 is preferred (NUMA 0 < NUMA 1)
+		Expect(resp.ContainerResponses[0].DeviceIDs).To(Equal([]string{"gpu0", "gpu1"}))
+	})
+
+	It("returns error when no partition matches the requested size", func() {
+		mock := &mockFMClient{
+			partitions: &fabricmanager.PartitionList{
+				NumPartitions: 1,
+				Partitions: []fabricmanager.Partition{
+					// Partition has 4 GPUs, but we request 2
+					buildPartition(1, "gpu0", "gpu1", "gpu2", "gpu3"),
+				},
+			},
+		}
+		fwd, rev := buildModuleMaps()
+		devs := []*pluginapi.Device{
+			buildDevice("gpu0", 0),
+			buildDevice("gpu1", 0),
+			buildDevice("gpu2", 1),
+			buildDevice("gpu3", 1),
+		}
+		dpi := &GenericDevicePlugin{
+			deviceName:       "test",
+			partitionManager: fabricmanager.NewPartitionManager(mock, fwd, rev, buildDeviceNUMAMap(devs)),
+			devs:             devs,
+		}
+
+		request := &pluginapi.PreferredAllocationRequest{
+			ContainerRequests: []*pluginapi.ContainerPreferredAllocationRequest{
+				{
+					AvailableDeviceIDs: []string{"gpu0", "gpu1", "gpu2", "gpu3"},
+					AllocationSize:     2,
+				},
+			},
+		}
+
+		_, err := dpi.GetPreferredAllocation(context.Background(), request)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("no fabric manager partition of size 2"))
+	})
+
+	It("returns error when must-include device is not in any matching partition", func() {
+		mock := &mockFMClient{
+			partitions: &fabricmanager.PartitionList{
+				NumPartitions: 1,
+				Partitions: []fabricmanager.Partition{
+					buildPartition(1, "gpu0", "gpu1"),
+				},
+			},
+		}
+		fwd, rev := buildModuleMaps()
+		devs := []*pluginapi.Device{
+			buildDevice("gpu0", 0),
+			buildDevice("gpu1", 0),
+			buildDevice("gpu2", 1),
+			buildDevice("gpu3", 1),
+		}
+		dpi := &GenericDevicePlugin{
+			deviceName:       "test",
+			partitionManager: fabricmanager.NewPartitionManager(mock, fwd, rev, buildDeviceNUMAMap(devs)),
+			devs:             devs,
+		}
+
+		request := &pluginapi.PreferredAllocationRequest{
+			ContainerRequests: []*pluginapi.ContainerPreferredAllocationRequest{
+				{
+					AvailableDeviceIDs:   []string{"gpu0", "gpu1", "gpu2", "gpu3"},
+					MustIncludeDeviceIDs: []string{"gpu2"},
+					AllocationSize:       2,
+				},
+			},
+		}
+
+		_, err := dpi.GetPreferredAllocation(context.Background(), request)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("no fabric manager partition of size 2"))
+	})
+
+	It("skips partitions with unavailable GPUs", func() {
+		mock := &mockFMClient{
+			partitions: &fabricmanager.PartitionList{
+				NumPartitions: 2,
+				Partitions: []fabricmanager.Partition{
+					// Partition 1 has gpu1 which is not available
+					buildPartition(1, "gpu0", "gpu1"),
+					// Partition 2 has both GPUs available
+					buildPartition(2, "gpu2", "gpu3"),
+				},
+			},
+		}
+		fwd, rev := buildModuleMaps()
+		devs := []*pluginapi.Device{
+			buildDevice("gpu0", 0),
+			buildDevice("gpu1", 0),
+			buildDevice("gpu2", 1),
+			buildDevice("gpu3", 1),
+		}
+		dpi := &GenericDevicePlugin{
+			deviceName:       "test",
+			partitionManager: fabricmanager.NewPartitionManager(mock, fwd, rev, buildDeviceNUMAMap(devs)),
+			devs:             devs,
+		}
+
+		request := &pluginapi.PreferredAllocationRequest{
+			ContainerRequests: []*pluginapi.ContainerPreferredAllocationRequest{
+				{
+					// gpu1 is NOT in the available list
+					AvailableDeviceIDs: []string{"gpu0", "gpu2", "gpu3"},
+					AllocationSize:     2,
+				},
+			},
+		}
+
+		resp, err := dpi.GetPreferredAllocation(context.Background(), request)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(resp.ContainerResponses).To(HaveLen(1))
+		// Partition 2 is the only candidate
+		Expect(resp.ContainerResponses[0].DeviceIDs).To(Equal([]string{"gpu2", "gpu3"}))
+	})
+
+	It("places must-include devices first in the result", func() {
+		mock := &mockFMClient{
+			partitions: &fabricmanager.PartitionList{
+				NumPartitions: 1,
+				Partitions: []fabricmanager.Partition{
+					buildPartition(1, "gpu0", "gpu1"),
+				},
+			},
+		}
+		fwd, rev := buildModuleMaps()
+		devs := []*pluginapi.Device{
+			buildDevice("gpu0", 0),
+			buildDevice("gpu1", 0),
+		}
+		dpi := &GenericDevicePlugin{
+			deviceName:       "test",
+			partitionManager: fabricmanager.NewPartitionManager(mock, fwd, rev, buildDeviceNUMAMap(devs)),
+			devs:             devs,
+		}
+
+		request := &pluginapi.PreferredAllocationRequest{
+			ContainerRequests: []*pluginapi.ContainerPreferredAllocationRequest{
+				{
+					AvailableDeviceIDs:   []string{"gpu0", "gpu1"},
+					MustIncludeDeviceIDs: []string{"gpu1"},
+					AllocationSize:       2,
+				},
+			},
+		}
+
+		resp, err := dpi.GetPreferredAllocation(context.Background(), request)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(resp.ContainerResponses).To(HaveLen(1))
+		// gpu1 (must-include) comes first, then gpu0
+		Expect(resp.ContainerResponses[0].DeviceIDs).To(Equal([]string{"gpu1", "gpu0"}))
 	})
 })

@@ -30,7 +30,7 @@ MAKE_TARGETS := build check fmt test check-vendor update-pcidb clean $(CHECK_TAR
 TARGETS := $(MAKE_TARGETS)
 
 DOCKER_TARGETS := $(patsubst %,docker-%, $(TARGETS))
-.PHONY: $(TARGETS) $(DOCKER_TARGETS)
+.PHONY: $(TARGETS) $(DOCKER_TARGETS) docker-test
 
 GOOS ?= linux
 
@@ -91,3 +91,12 @@ update-pcidb:
 
 clean:
 	rm -rf nvidia-kubevirt-gpu-device-plugin && rm -rf coverage.out
+
+docker-test:
+	$(DOCKER) build --target builder \
+		--build-arg GOLANG_VERSION="$(GOLANG_VERSION)" \
+		--build-arg DRIVER_VERSION="$(DRIVER_VERSION)" \
+		-t kubevirt-gpu-test \
+		-f deployments/container/Dockerfile.distroless .
+	$(DOCKER) run --rm kubevirt-gpu-test \
+		bash -c "CGO_ENABLED=1 CGO_CPPFLAGS='-I/usr/include' CGO_LDFLAGS='-L/usr/lib -lnvfm' go test -tags=nvfm -coverprofile=coverage.out.with-mocks $(MODULE)/..."
