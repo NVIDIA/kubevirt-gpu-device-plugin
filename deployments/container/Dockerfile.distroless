@@ -47,6 +47,9 @@ ENV GOROOT=/usr/local/go
 ENV GOPATH=/go
 ENV PATH=${GOPATH}/bin:${GOROOT}/bin:${PATH}
 
+ARG GOPROXY="https://proxy.golang.org,direct"
+ENV GOPROXY=$GOPROXY
+
 WORKDIR /workspace
 
 COPY go.mod go.sum ./
