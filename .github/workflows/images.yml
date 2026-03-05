@@ -37,9 +37,9 @@ jobs:
           - arm64
         include:
           - arch: amd64
-            runs_on: ubuntu-24.04
+            runs_on: linux-amd64-cpu4
           - arch: arm64
-            runs_on: ubuntu-24.04-arm
+            runs_on: linux-arm64-cpu4
     runs-on: ${{ matrix.runs_on }}
     permissions:
       contents: read
@@ -76,11 +76,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Setup Go Proxy
+        id: setup-go-proxy
+        uses: nv-gha-runners/setup-artifactory-go-proxy@main
+
       - name: Build image
         env:
           IMAGE_NAME: ghcr.io/${LOWERCASE_REPO_OWNER}/kubevirt-gpu-device-plugin
           VERSION: ${COMMIT_SHORT_SHA}-${{ matrix.arch }}
           DOCKER_BUILD_PLATFORM_OPTIONS: "--platform=linux/${{ matrix.arch }}"
+          GOPROXY: ${{ steps.setup-go-proxy.outputs.goproxy-url }}
         run: |
           echo "${VERSION}"
           make -f deployments/container/Makefile build-${{ matrix.dist }}
