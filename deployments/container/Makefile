@@ -63,6 +63,7 @@ $(BUILD_TARGETS): build-%:
 		--build-arg VERSION="$(VERSION)" \
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
 		--build-arg GOPROXY="$(GOPROXY)" \
+		--build-arg DRIVER_VERSION="$(DRIVER_VERSION)" \
 		--file $(DOCKERFILE) \
 		$(CURDIR)
 ifeq ($(PUSH_ON_BUILD),true)

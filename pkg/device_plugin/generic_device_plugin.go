@@ -38,6 +38,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,6 +46,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
+
+	"kubevirt-gpu-device-plugin/pkg/fabricmanager"
 )
 
 const (
@@ -56,27 +59,45 @@ const (
 	vgpuPrefix        = "MDEV_PCI_RESOURCE_NVIDIA_COM"
 )
 
-var returnIommuMap = getIommuMap
-var returnBdfToIommuMap = getBdfToIommuMap
+var (
+	returnIommuMap      = getIommuMap
+	returnBdfToIommuMap = getBdfToIommuMap
+
+	pciModuleMappingPath = "/run/nvidia-fabricmanager/gpu-pci-module-mapping.json"
+)
+
+// isFabricManagerEnabled returns true if fabric manager integration is enabled
+// via the ENABLE_FABRIC_MANAGER environment variable.
+func isFabricManagerEnabled() bool {
+	envVar := os.Getenv("ENABLE_FABRIC_MANAGER")
+	enabled, _ := strconv.ParseBool(envVar)
+	return enabled
+}
 
 // Implements the kubernetes device plugin API
 type GenericDevicePlugin struct {
-	devs       []*pluginapi.Device
-	server     *grpc.Server
-	socketPath string
-	stop       chan struct{} // this channel signals to stop the DP
-	term       chan bool     // this channel detects kubelet restarts
-	healthy    chan string
-	unhealthy  chan string
-	devicePath string
-	deviceName string
-	devsHealth []*pluginapi.Device
+	devs             []*pluginapi.Device
+	server           *grpc.Server
+	socketPath       string
+	stop             chan struct{} // this channel signals to stop the DP
+	term             chan bool     // this channel detects kubelet restarts
+	healthy          chan string
+	unhealthy        chan string
+	devicePath       string
+	deviceName       string
+	devsHealth       []*pluginapi.Device
+	fmEnabled        bool
+	partitionManager *fabricmanager.PartitionManager
 }
 
 // Returns an initialized instance of GenericDevicePlugin
 func NewGenericDevicePlugin(deviceName string, devicePath string, devices []*pluginapi.Device) *GenericDevicePlugin {
 	log.Println("Devicename " + deviceName)
 	serverSock := fmt.Sprintf(pluginapi.DevicePluginPath+"kubevirt-%s.sock", deviceName)
+
+	fmEnabled := isFabricManagerEnabled()
+	log.Printf("[%s] Fabric manager integration enabled: %t", deviceName, fmEnabled)
+
 	dpi := &GenericDevicePlugin{
 		devs:       devices,
 		socketPath: serverSock,
@@ -85,6 +106,7 @@ func NewGenericDevicePlugin(deviceName string, devicePath string, devices []*plu
 		unhealthy:  make(chan string),
 		deviceName: deviceName,
 		devicePath: devicePath,
+		fmEnabled:  fmEnabled,
 	}
 	return dpi
 }
@@ -139,9 +161,73 @@ func (dpi *GenericDevicePlugin) Start(stop chan struct{}) error {
 		return err
 	}
 
+	// Attempt fabric manager connection if enabled
+	if dpi.fmEnabled {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		fmConfig := &fabricmanager.Config{
+			AddressInfo: "/run/nvidia-fabricmanager/fmpm.sock",
+			AddressType: fabricmanager.AddressTypeUnix,
+			TimeoutMs:   5000,
+			MaxRetries:  3,
+			RetryDelay:  time.Second * 2,
+			Debug:       false,
+		}
+		fmClient := fabricmanager.NewClient(fmConfig)
+
+		if err := fmClient.Connect(ctx); err != nil {
+			log.Printf("WARNING: Fabric manager enabled but connection failed: %v", err)
+			log.Print("Falling back to legacy device plugin mode")
+		} else {
+			log.Print("Fabric manager connected successfully")
+
+			// Load PCI-to-module mapping
+			pciToModule, moduleToPCI, mapErr := fabricmanager.LoadPCIModuleMapping(pciModuleMappingPath)
+			if mapErr != nil {
+				log.Printf("WARNING: Failed to load PCI module mapping: %v", mapErr)
+				log.Print("Falling back to legacy device plugin mode")
+			} else {
+				log.Printf("Loaded PCI-to-module mapping with %d entries", len(pciToModule))
+
+				// Build device NUMA map from device list
+				deviceNUMAMap := make(map[string]int64, len(dpi.devs))
+				for _, dev := range dpi.devs {
+					if dev.Topology != nil && len(dev.Topology.Nodes) > 0 {
+						deviceNUMAMap[dev.ID] = dev.Topology.Nodes[0].ID
+					}
+				}
+
+				dpi.partitionManager = fabricmanager.NewPartitionManager(
+					fmClient, pciToModule, moduleToPCI, deviceNUMAMap,
+				)
+
+				// List and log partition information
+				partitions, err := dpi.partitionManager.GetPartitions(ctx)
+				if err != nil {
+					log.Printf("WARNING: Failed to retrieve fabric partitions: %v", err)
+				} else {
+					log.Printf("INFO: Discovered %d fabric partitions (max: %d):", partitions.NumPartitions, partitions.MaxNumPartitions)
+
+					for _, partition := range partitions.Partitions {
+						status := "inactive"
+						if partition.IsActive {
+							status = "active"
+						}
+						log.Printf("INFO: Partition ID %d: %s, GPUs: %d", partition.PartitionID, status, partition.NumGPUs)
+
+						for _, gpu := range partition.GPUs {
+							log.Printf("INFO:   GPU %d: NVLinks=%d/%d", gpu.PhysicalID, gpu.NumNVLinksAvailable, gpu.MaxNumNVLinks)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	sock, err := net.Listen("unix", dpi.socketPath)
 	if err != nil {
-		log.Printf("[%s] Error creating GRPC server socket: %v", dpi.deviceName, err)
+		log.Printf("Error creating GRPC server socket: %v", err)
 		return err
 	}
 
@@ -180,6 +266,17 @@ func (dpi *GenericDevicePlugin) Stop() error {
 
 	dpi.server.Stop()
 	dpi.server = nil
+
+	// Disconnect from fabric manager if connected
+	if dpi.partitionManager != nil {
+		if err := dpi.partitionManager.Disconnect(); err != nil {
+			log.Printf("[%s] WARNING: Error disconnecting from fabric manager: %v",
+				dpi.deviceName, err)
+		} else {
+			log.Printf("[%s] Fabric manager disconnected successfully", dpi.deviceName)
+		}
+		dpi.partitionManager = nil
+	}
 
 	return dpi.cleanup()
 }
@@ -357,6 +454,26 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 		responses.ContainerResponses = append(responses.ContainerResponses, &response)
 	}
 
+	// Extract all device IDs from requests for fabric manager
+	var allDeviceIDs []string
+	for _, req := range reqs.ContainerRequests {
+		allDeviceIDs = append(allDeviceIDs, req.DevicesIDs...)
+	}
+
+	// Fabric manager operations (required when active)
+	if dpi.partitionManager != nil {
+		if !dpi.partitionManager.IsConnected() {
+			return nil, fmt.Errorf("fabric manager is enabled but connection lost")
+		}
+
+		if err := dpi.partitionManager.ActivateForDevices(ctx, allDeviceIDs); err != nil {
+			log.Printf("ERROR: Fabric partition activation failed: %v", err)
+			return nil, fmt.Errorf("fabric manager partition activation failed: %w", err)
+		}
+
+		log.Printf("Fabric partition activated successfully for devices: %v", allDeviceIDs)
+	}
+
 	return &responses, nil
 }
 
@@ -384,124 +501,39 @@ func (dpi *GenericDevicePlugin) PreStartContainer(ctx context.Context, in *plugi
 // GetPreferredAllocation returns a preferred set of devices to allocate
 // from a list of available ones. This helps the Topology Manager make
 // topology-aware allocation decisions based on NUMA affinity.
+// When fabric manager is active, it prefers devices that form a complete
+// FM partition of the exact requested size with the best NUMA locality.
 func (dpi *GenericDevicePlugin) GetPreferredAllocation(ctx context.Context, in *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
 	log.Printf("[%s] GetPreferredAllocation called with %d container request(s)", dpi.deviceName, len(in.ContainerRequests))
 
 	response := &pluginapi.PreferredAllocationResponse{}
 
+	// Build device-to-NUMA map for logging
+	deviceToNUMA := make(map[string]int64)
+	for _, dev := range dpi.devs {
+		if dev.Topology != nil && len(dev.Topology.Nodes) > 0 {
+			deviceToNUMA[dev.ID] = dev.Topology.Nodes[0].ID
+		}
+	}
+
 	for idx, req := range in.ContainerRequests {
 		log.Printf("[%s] Container request %d: Available devices=%v, MustInclude=%v, AllocationSize=%d",
 			dpi.deviceName, idx, req.AvailableDeviceIDs, req.MustIncludeDeviceIDs, req.AllocationSize)
 
-		// Build a map of device ID to NUMA node from our device list
-		deviceToNUMA := make(map[string]int64)
-		for _, dev := range dpi.devs {
-			if dev.Topology != nil && len(dev.Topology.Nodes) > 0 {
-				deviceToNUMA[dev.ID] = dev.Topology.Nodes[0].ID
-			}
-		}
-		getNUMANode := func(deviceID string) int64 {
-			if node, ok := deviceToNUMA[deviceID]; ok {
-				return node
-			}
-			return -1
-		}
-
-		// Group available devices by NUMA node while preserving iteration order
-		numaToDevices := make(map[int64][]string)
-		var nodeOrder []int64
-		nodeSeen := make(map[int64]struct{})
-		for _, deviceID := range req.AvailableDeviceIDs {
-			numaNode := getNUMANode(deviceID)
-			numaToDevices[numaNode] = append(numaToDevices[numaNode], deviceID)
-			if _, ok := nodeSeen[numaNode]; !ok {
-				nodeOrder = append(nodeOrder, numaNode)
-				nodeSeen[numaNode] = struct{}{}
-			}
-		}
-
-		// Prefer devices from the same NUMA node
 		var preferredDevices []string
-		preferredSet := make(map[string]struct{})
-		selectedPerNode := make(map[int64]int)
-		addDevice := func(deviceID string) {
-			if _, exists := preferredSet[deviceID]; exists {
-				return
-			}
-			preferredSet[deviceID] = struct{}{}
-			numaNode := getNUMANode(deviceID)
-			selectedPerNode[numaNode]++
-			preferredDevices = append(preferredDevices, deviceID)
+		var err error
+
+		if dpi.partitionManager != nil {
+			preferredDevices, err = dpi.partitionManager.SelectPreferred(ctx, &fabricmanager.SelectPreferredRequest{
+				AvailableDeviceIDs:   req.AvailableDeviceIDs,
+				MustIncludeDeviceIDs: req.MustIncludeDeviceIDs,
+				AllocationSize:       int(req.AllocationSize),
+			})
+		} else {
+			preferredDevices, err = dpi.preferDevicesByNUMA(req)
 		}
-
-		// Always place must-include devices first
-		selectedNodeOrder := []int64{}
-		selectedNodeSeen := make(map[int64]struct{})
-		for _, deviceID := range req.MustIncludeDeviceIDs {
-			if _, exists := preferredSet[deviceID]; exists {
-				continue
-			}
-			addDevice(deviceID)
-			numaNode := getNUMANode(deviceID)
-			if _, ok := selectedNodeSeen[numaNode]; !ok {
-				selectedNodeOrder = append(selectedNodeOrder, numaNode)
-				selectedNodeSeen[numaNode] = struct{}{}
-			}
-		}
-
-		if len(preferredDevices) > int(req.AllocationSize) {
-			return nil, fmt.Errorf("number of MustIncludeDeviceIDs (%d) exceeds allocation size (%d)",
-				len(preferredDevices), req.AllocationSize)
-		}
-
-		// First, try to satisfy the request from a single NUMA node (including already selected devices)
-		if len(preferredDevices) < int(req.AllocationSize) {
-			targetNode := int64(-1)
-			var candidateNodes []int64
-			candidateNodes = append(candidateNodes, selectedNodeOrder...)
-			for _, node := range nodeOrder {
-				if _, seen := selectedNodeSeen[node]; seen {
-					continue
-				}
-				candidateNodes = append(candidateNodes, node)
-			}
-
-			for _, numaNode := range candidateNodes {
-				availableOnNode := 0
-				for _, deviceID := range numaToDevices[numaNode] {
-					if _, exists := preferredSet[deviceID]; !exists {
-						availableOnNode++
-					}
-				}
-				totalOnNode := selectedPerNode[numaNode] + availableOnNode
-				if totalOnNode >= int(req.AllocationSize) {
-					log.Printf("[%s] Selecting NUMA node %d (have %d selected, %d available) to satisfy %d devices",
-						dpi.deviceName, numaNode, selectedPerNode[numaNode], availableOnNode, req.AllocationSize)
-					targetNode = numaNode
-					break
-				}
-			}
-
-			if targetNode != -1 {
-				for _, deviceID := range numaToDevices[targetNode] {
-					if len(preferredDevices) >= int(req.AllocationSize) {
-						break
-					}
-					addDevice(deviceID)
-				}
-			}
-		}
-
-		// If we couldn't fill the request from a single NUMA node, fall back to the kubelet-provided order
-		if len(preferredDevices) < int(req.AllocationSize) {
-			log.Printf("[%s] Using kubelet-provided device order to satisfy remaining slots (need %d more)",
-				dpi.deviceName, int(req.AllocationSize)-len(preferredDevices))
-			for _, deviceID := range req.AvailableDeviceIDs {
-				if len(preferredDevices) >= int(req.AllocationSize) {
-					break
-				}
-				addDevice(deviceID)
-			}
+		if err != nil {
+			return nil, err
 		}
 
 		log.Printf("[%s] Preferred allocation for container %d: %v (NUMA nodes: %v)",
@@ -522,6 +554,125 @@ func (dpi *GenericDevicePlugin) GetPreferredAllocation(ctx context.Context, in *
 	}
 
 	return response, nil
+}
+
+// preferDevicesByNUMA selects preferred devices based on NUMA node locality.
+// It prefers devices from the same NUMA node and falls back to kubelet-provided order.
+func (dpi *GenericDevicePlugin) preferDevicesByNUMA(
+	req *pluginapi.ContainerPreferredAllocationRequest,
+) ([]string, error) {
+	// Build a map of device ID to NUMA node from our device list
+	deviceToNUMA := make(map[string]int64)
+	for _, dev := range dpi.devs {
+		if dev.Topology != nil && len(dev.Topology.Nodes) > 0 {
+			deviceToNUMA[dev.ID] = dev.Topology.Nodes[0].ID
+		}
+	}
+	getNUMANode := func(deviceID string) int64 {
+		if node, ok := deviceToNUMA[deviceID]; ok {
+			return node
+		}
+		return -1
+	}
+
+	// Group available devices by NUMA node while preserving iteration order
+	numaToDevices := make(map[int64][]string)
+	var nodeOrder []int64
+	nodeSeen := make(map[int64]struct{})
+	for _, deviceID := range req.AvailableDeviceIDs {
+		numaNode := getNUMANode(deviceID)
+		numaToDevices[numaNode] = append(numaToDevices[numaNode], deviceID)
+		if _, ok := nodeSeen[numaNode]; !ok {
+			nodeOrder = append(nodeOrder, numaNode)
+			nodeSeen[numaNode] = struct{}{}
+		}
+	}
+
+	// Prefer devices from the same NUMA node
+	var preferredDevices []string
+	preferredSet := make(map[string]struct{})
+	selectedPerNode := make(map[int64]int)
+	addDevice := func(deviceID string) {
+		if _, exists := preferredSet[deviceID]; exists {
+			return
+		}
+		preferredSet[deviceID] = struct{}{}
+		numaNode := getNUMANode(deviceID)
+		selectedPerNode[numaNode]++
+		preferredDevices = append(preferredDevices, deviceID)
+	}
+
+	// Always place must-include devices first
+	selectedNodeOrder := []int64{}
+	selectedNodeSeen := make(map[int64]struct{})
+	for _, deviceID := range req.MustIncludeDeviceIDs {
+		if _, exists := preferredSet[deviceID]; exists {
+			continue
+		}
+		addDevice(deviceID)
+		numaNode := getNUMANode(deviceID)
+		if _, ok := selectedNodeSeen[numaNode]; !ok {
+			selectedNodeOrder = append(selectedNodeOrder, numaNode)
+			selectedNodeSeen[numaNode] = struct{}{}
+		}
+	}
+
+	if len(preferredDevices) > int(req.AllocationSize) {
+		return nil, fmt.Errorf("number of MustIncludeDeviceIDs (%d) exceeds allocation size (%d)",
+			len(preferredDevices), req.AllocationSize)
+	}
+
+	// First, try to satisfy the request from a single NUMA node (including already selected devices)
+	if len(preferredDevices) < int(req.AllocationSize) {
+		targetNode := int64(-1)
+		var candidateNodes []int64
+		candidateNodes = append(candidateNodes, selectedNodeOrder...)
+		for _, node := range nodeOrder {
+			if _, seen := selectedNodeSeen[node]; seen {
+				continue
+			}
+			candidateNodes = append(candidateNodes, node)
+		}
+
+		for _, numaNode := range candidateNodes {
+			availableOnNode := 0
+			for _, deviceID := range numaToDevices[numaNode] {
+				if _, exists := preferredSet[deviceID]; !exists {
+					availableOnNode++
+				}
+			}
+			totalOnNode := selectedPerNode[numaNode] + availableOnNode
+			if totalOnNode >= int(req.AllocationSize) {
+				log.Printf("[%s] Selecting NUMA node %d (have %d selected, %d available) to satisfy %d devices",
+					dpi.deviceName, numaNode, selectedPerNode[numaNode], availableOnNode, req.AllocationSize)
+				targetNode = numaNode
+				break
+			}
+		}
+
+		if targetNode != -1 {
+			for _, deviceID := range numaToDevices[targetNode] {
+				if len(preferredDevices) >= int(req.AllocationSize) {
+					break
+				}
+				addDevice(deviceID)
+			}
+		}
+	}
+
+	// If we couldn't fill the request from a single NUMA node, fall back to the kubelet-provided order
+	if len(preferredDevices) < int(req.AllocationSize) {
+		log.Printf("[%s] Using kubelet-provided device order to satisfy remaining slots (need %d more)",
+			dpi.deviceName, int(req.AllocationSize)-len(preferredDevices))
+		for _, deviceID := range req.AvailableDeviceIDs {
+			if len(preferredDevices) >= int(req.AllocationSize) {
+				break
+			}
+			addDevice(deviceID)
+		}
+	}
+
+	return preferredDevices, nil
 }
 
 // Health check of GPU devices
