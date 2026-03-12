@@ -70,7 +70,6 @@ type GenericDevicePlugin struct {
 	unhealthy  chan string
 	devicePath string
 	deviceName string
-	devsHealth []*pluginapi.Device
 }
 
 // Returns an initialized instance of GenericDevicePlugin

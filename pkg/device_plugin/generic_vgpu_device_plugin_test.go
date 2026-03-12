@@ -30,7 +30,6 @@ package device_plugin
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -40,16 +39,6 @@ import (
 	. "github.com/onsi/gomega"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
-
-func getFakeVgpuIDFromFileGeneric(basePath string, deviceAddress string, link string) (string, error) {
-	if deviceAddress == "1" {
-		return "foo", nil
-	} else if deviceAddress == "22" {
-		return "2", nil
-	} else {
-		return "", errors.New("Incorrect operation")
-	}
-}
 
 func fakeNvmlInit() error {
 	return nil

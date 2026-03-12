@@ -46,7 +46,6 @@ var devices []*pluginapi.Device
 var iommuGroup1 = "1"
 var iommuGroup2 = "2"
 var iommuGroup3 = "3"
-var iommuGroup4 = "4"
 var pciAddress1 = "11"
 var pciAddress2 = "22"
 var pciAddress3 = "33"
