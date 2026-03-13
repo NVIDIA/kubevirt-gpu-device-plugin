@@ -62,7 +62,6 @@ type GenericVGpuDevicePlugin struct {
 	unhealthy  chan string
 	devicePath string
 	deviceName string
-	devsHealth []*pluginapi.Device
 }
 
 func NewGenericVGpuDevicePlugin(deviceName string, devicePath string, devices []*pluginapi.Device) *GenericVGpuDevicePlugin {
@@ -404,9 +403,6 @@ func watchXIDsFunc(devs []*nvml.Device, xids chan<- *nvml.Device) {
 	}
 
 	for {
-		select {
-		default:
-		}
 
 		e, err := nvml.WaitForEvent(eventSet, 5000)
 		if err != nil && e.Etype != nvml.XidCriticalError {
