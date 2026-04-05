@@ -10,13 +10,13 @@
 - [Docs](#docs)
 
 ## About
-This is a kubernetes device plugin that can discover and expose GPUs and vGPUs on a kubernetes node. This device plugin will enable to launch GPU attached [KubeVirt](https://github.com/kubevirt/kubevirt/blob/master/README.md) VMs in your kubernetes cluster. Its specifically developed to serve KubeVirt workloads in a Kubernetes cluster.
+This is a kubernetes device plugin that can discover and expose GPUs and vGPUs on a kubernetes node. This device plugin will enable launching GPU attached [KubeVirt](https://github.com/kubevirt/kubevirt/blob/master/README.md) VMs in your kubernetes cluster. Its specifically developed to serve KubeVirt workloads in a Kubernetes cluster.
 
 
 ## Features
-- Discovers Nvidia GPUs which are bound to VFIO-PCI driver and exposes them as devices available to be attached to VM in pass through mode.
+- Discovers Nvidia GPUs which are bound to VFIO-PCI driver and exposes them as devices available to be attached to VM in passthrough mode.
 - Discovers Nvidia vGPUs configured on a kubernetes node and exposes them to be attached to KubeVirt VMs
-- Performs basic health check on the GPU on a kubernetes node.
+- Performs basic health checks on the GPU on a kubernetes node.
 
 ## Prerequisites
 - Need to have Nvidia GPU configured for GPU passthrough or vGPU. Quickstart section provides details about this
@@ -26,7 +26,7 @@ This is a kubernetes device plugin that can discover and expose GPUs and vGPUs o
 
 ## Quick Start
 
-Before starting the device plug, the GPUs on a kubernetes node need to configured to be in GPU pass through mode or vGPU mode
+Before starting the device plug, the GPUs on a kubernetes node need to be configured to be in GPU passthrough mode or vGPU mode
 
 ### Whitelist GPU and vGPU in KubeVirt CR
 GPUs and vGPUs should be allowlisted in the KubeVirt CR following the instructions outlined [here](https://kubevirt.io/user-guide/virtual_machines/host-devices/#listing-permitted-devices). An example KubeVirt CR can be found under `/examples`.
@@ -59,7 +59,7 @@ grub2-mkconfig -o /boot/efi/EFI/centos/grub.cfg
 reboot
 ```
 
-After rebooting, verify IOMMU is enabled using following command
+After rebooting, verify IOMMU is enabled using the following command
 ```shell
 dmesg | grep -E "DMAR|IOMMU"
 ```
@@ -173,12 +173,12 @@ lrwxrwxrwx. 1 root root 0 Nov 24 13:33 aa618089-8b16-4d01-a136-25a0f3c73123 -> .
 
 ## Docs
 ### Deployment
-The daemon set creation yaml can be used to deploy the device plugin. 
+The Daemonset creation yaml can be used to deploy the device plugin. 
 ```
 kubectl apply -f nvidia-kubevirt-gpu-device-plugin.yaml
 ```
 
-Example YAMLs for creating VMs with GPU/vGPU are in the `examples` folder
+Example YAML files for creating VMs with GPU/vGPU are in the `examples` folder
 
 ### Build
 
