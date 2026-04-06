@@ -38,6 +38,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -52,12 +53,20 @@ const (
 	connectionTimeout = 5 * time.Second
 	vfioDevicePath    = "/dev/vfio"
 	iommuDevicePath   = "/dev/iommu"
+	egmClassPath      = "/sys/class/egm"
+	deviceDir         = "/dev"
 	gpuPrefix         = "PCI_RESOURCE_NVIDIA_COM"
 	vgpuPrefix        = "MDEV_PCI_RESOURCE_NVIDIA_COM"
 )
 
+type EGMDeviceInfo struct {
+	DevPath string
+	GPUBDFs []string
+}
+
 var returnIommuMap = getIommuMap
 var returnBdfToIommuMap = getBdfToIommuMap
+var discoverEGMDevices = discoverEGMDevicesFunc
 
 // Implements the kubernetes device plugin API
 type GenericDevicePlugin struct {
@@ -94,6 +103,84 @@ func buildEnv(envList map[string][]string) map[string]string {
 		env[key] = strings.Join(devList, ",")
 	}
 	return env
+}
+
+func appendDeviceSpec(deviceSpecs *[]*pluginapi.DeviceSpec, seen map[string]struct{}, hostPath string) {
+	if _, exists := seen[hostPath]; exists {
+		return
+	}
+	*deviceSpecs = append(*deviceSpecs, &pluginapi.DeviceSpec{
+		HostPath:      hostPath,
+		ContainerPath: hostPath,
+		Permissions:   "mrw",
+	})
+	seen[hostPath] = struct{}{}
+}
+
+func discoverEGMDevicesFunc() ([]EGMDeviceInfo, error) {
+	egmClassDir := filepath.Join(rootPath, strings.TrimPrefix(egmClassPath, "/"))
+	entries, err := os.ReadDir(egmClassDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	devices := make([]EGMDeviceInfo, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, "egm") {
+			continue
+		}
+		gpuRaw, err := os.ReadFile(filepath.Join(egmClassDir, name, "gpu_devices"))
+		if err != nil {
+			log.Printf("warning: skipping EGM device %s: unable to read gpu_devices: %v", name, err)
+			continue
+		}
+		gpuBDFs := strings.Fields(string(gpuRaw))
+		if len(gpuBDFs) == 0 {
+			continue
+		}
+		devPath := filepath.Join(deviceDir, name)
+		if _, err := os.Stat(filepath.Join(rootPath, strings.TrimPrefix(devPath, "/"))); err != nil {
+			log.Printf("warning: skipping EGM device %s: device node %s is not accessible: %v", name, devPath, err)
+			continue
+		}
+		devices = append(devices, EGMDeviceInfo{DevPath: devPath, GPUBDFs: gpuBDFs})
+	}
+
+	slices.SortFunc(devices, func(a, b EGMDeviceInfo) int {
+		return strings.Compare(a.DevPath, b.DevPath)
+	})
+	return devices, nil
+}
+
+// egmPathsForAllocatedGPUs returns EGM device paths only when ALL GPUs
+// associated with an EGM device are present in the allocated BDF list.
+// This prevents injecting a shared EGM device when only a subset of its
+// GPUs are allocated (e.g. 1 of 2 GPUs on a 1C2G socket), which would
+// cause conflicts if the remaining GPUs are allocated to a different VM.
+func egmPathsForAllocatedGPUs(allocatedBDFs []string, egmDevices []EGMDeviceInfo) []string {
+	allocated := make(map[string]struct{}, len(allocatedBDFs))
+	for _, bdf := range allocatedBDFs {
+		allocated[strings.ToLower(strings.TrimSpace(bdf))] = struct{}{}
+	}
+	paths := make([]string, 0)
+	for _, egm := range egmDevices {
+		allPresent := true
+		for _, gpu := range egm.GPUBDFs {
+			if _, ok := allocated[strings.ToLower(strings.TrimSpace(gpu))]; !ok {
+				allPresent = false
+				break
+			}
+		}
+		if allPresent {
+			paths = append(paths, egm.DevPath)
+		}
+	}
+	slices.Sort(paths)
+	return paths
 }
 
 func waitForGrpcServer(socketPath string, timeout time.Duration) error {
@@ -276,8 +363,14 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 	if err != nil {
 		return nil, fmt.Errorf("could not determine iommufd support: %w", err)
 	}
+	egmDevices, err := discoverEGMDevices()
+	if err != nil {
+		log.Printf("[%s] Warning: unable to discover EGM devices, continuing without EGM mounts: %v", dpi.deviceName, err)
+		egmDevices = nil
+	}
 	for _, req := range reqs.ContainerRequests {
 		deviceSpecs := make([]*pluginapi.DeviceSpec, 0)
+		seenDeviceSpecs := make(map[string]struct{})
 		returnedMap := returnIommuMap()
 		bdfToIommu := returnBdfToIommuMap()
 		for _, bdf := range req.DevicesIDs {
@@ -312,32 +405,16 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 					if err != nil {
 						return nil, fmt.Errorf("could not determine iommufd device for device %s: %v", dev.addr, err)
 					}
-					deviceSpecs = append(deviceSpecs, &pluginapi.DeviceSpec{
-						HostPath:      filepath.Join(vfioDevicePath, "devices", vfiodev),
-						ContainerPath: filepath.Join(vfioDevicePath, "devices", vfiodev),
-						Permissions:   "mrw",
-					})
+					appendDeviceSpec(&deviceSpecs, seenDeviceSpecs, filepath.Join(vfioDevicePath, "devices", vfiodev))
 				}
 			}
 			if !requestedDeviceFound {
 				return nil, fmt.Errorf("invalid allocation request: unknown device: %s", bdf)
 			}
-			deviceSpecs = append(deviceSpecs, &pluginapi.DeviceSpec{
-				HostPath:      filepath.Join(vfioDevicePath, "vfio"),
-				ContainerPath: filepath.Join(vfioDevicePath, "vfio"),
-				Permissions:   "mrw",
-			})
-			deviceSpecs = append(deviceSpecs, &pluginapi.DeviceSpec{
-				HostPath:      filepath.Join(vfioDevicePath, iommuId),
-				ContainerPath: filepath.Join(vfioDevicePath, iommuId),
-				Permissions:   "mrw",
-			})
+			appendDeviceSpec(&deviceSpecs, seenDeviceSpecs, filepath.Join(vfioDevicePath, "vfio"))
+			appendDeviceSpec(&deviceSpecs, seenDeviceSpecs, filepath.Join(vfioDevicePath, iommuId))
 			if iommufdSupported {
-				deviceSpecs = append(deviceSpecs, &pluginapi.DeviceSpec{
-					HostPath:      iommuDevicePath,
-					ContainerPath: iommuDevicePath,
-					Permissions:   "mrw",
-				})
+				appendDeviceSpec(&deviceSpecs, seenDeviceSpecs, iommuDevicePath)
 			}
 
 			key := fmt.Sprintf("%s_%s", gpuPrefix, strings.ToUpper(dpi.deviceName))
@@ -345,6 +422,13 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 				envList[key] = []string{}
 			}
 			envList[key] = append(envList[key], devAddrs...)
+		}
+		egmPaths := egmPathsForAllocatedGPUs(req.DevicesIDs, egmDevices)
+		for _, egmPath := range egmPaths {
+			appendDeviceSpec(&deviceSpecs, seenDeviceSpecs, egmPath)
+		}
+		if len(egmPaths) > 0 {
+			log.Printf("[%s] EGM devices injected: %v", dpi.deviceName, egmPaths)
 		}
 		envs := buildEnv(envList)
 		log.Printf("[%s] Allocated devices - Envs: %v, DeviceSpecs count: %d", dpi.deviceName, envs, len(deviceSpecs))

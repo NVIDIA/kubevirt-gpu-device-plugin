@@ -78,6 +78,24 @@ func getFakeBdfToIommuMap() map[string]string {
 	}
 }
 
+func getFakeEGMDevices() ([]EGMDeviceInfo, error) {
+	return nil, nil
+}
+
+func getFakeSharedEGMDevices() ([]EGMDeviceInfo, error) {
+	return []EGMDeviceInfo{{
+		DevPath: "/dev/egm4",
+		GPUBDFs: []string{pciAddress1, pciAddress2},
+	}}, nil
+}
+
+func getFakeMultiSocketEGMDevices() ([]EGMDeviceInfo, error) {
+	return []EGMDeviceInfo{
+		{DevPath: "/dev/egm4", GPUBDFs: []string{pciAddress1, pciAddress2}},
+		{DevPath: "/dev/egm5", GPUBDFs: []string{pciAddress3, pciAddress4}},
+	}, nil
+}
+
 func getFakeLink(basePath string, deviceAddress string, link string) (string, error) {
 	if deviceAddress == pciAddress1 {
 		return iommuGroup1, nil
@@ -96,6 +114,14 @@ func getFakeIDFromFile(basePath string, deviceAddress string, link string) (stri
 
 }
 
+func getFakeIDFromFileForSharedEGM(basePath string, deviceAddress string, link string) (string, error) {
+	if deviceAddress == pciAddress1 || deviceAddress == pciAddress2 {
+		return nvVendorID, nil
+	}
+	return "", errors.New("Incorrect operation")
+
+}
+
 var _ = Describe("Generic Device", func() {
 	var workDir string
 	var err error
@@ -108,6 +134,7 @@ var _ = Describe("Generic Device", func() {
 		returnBdfToIommuMap = getFakeBdfToIommuMap
 		readLink = getFakeLink
 		readIDFromFile = getFakeIDFromFile
+		discoverEGMDevices = getFakeEGMDevices
 		var devs []*pluginapi.Device
 		workDir, err = os.MkdirTemp("", "kubevirt-test")
 		Expect(err).ToNot(HaveOccurred())
@@ -139,6 +166,7 @@ var _ = Describe("Generic Device", func() {
 	})
 
 	AfterEach(func() {
+		discoverEGMDevices = discoverEGMDevicesFunc
 		close(stop)
 		os.RemoveAll(workDir)
 	})
@@ -165,6 +193,81 @@ var _ = Describe("Generic Device", func() {
 		Expect(responses.GetContainerResponses()[0].Devices[1].HostPath).To(Equal("/dev/vfio/1"))
 		Expect(responses.GetContainerResponses()[0].Devices[1].ContainerPath).To(Equal("/dev/vfio/1"))
 		Expect(responses.GetContainerResponses()[0].Devices[1].Permissions).To(Equal("mrw"))
+	})
+
+	It("Should inject EGM device when all associated GPUs are allocated", func() {
+		readIDFromFile = getFakeIDFromFileForSharedEGM
+		discoverEGMDevices = getFakeSharedEGMDevices
+		devs := []string{pciAddress1, pciAddress2}
+		envKey := gpuPrefix + "_FOO"
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		requests := pluginapi.AllocateRequest{}
+		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
+		ctx := context.Background()
+		responses, err := dpi.Allocate(ctx, &requests)
+		Expect(err).To(BeNil())
+		Expect(responses.GetContainerResponses()[0].Envs[envKey]).To(Equal(pciAddress1 + "," + pciAddress2))
+		egmCount := 0
+		for _, dev := range responses.GetContainerResponses()[0].Devices {
+			if dev.HostPath == "/dev/egm4" {
+				egmCount++
+			}
+		}
+		Expect(egmCount).To(Equal(1))
+	})
+
+	It("Should not inject EGM device when only a subset of associated GPUs are allocated", func() {
+		discoverEGMDevices = getFakeSharedEGMDevices
+		devs := []string{pciAddress1}
+		envKey := gpuPrefix + "_FOO"
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		requests := pluginapi.AllocateRequest{}
+		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
+		ctx := context.Background()
+		responses, err := dpi.Allocate(ctx, &requests)
+		Expect(err).To(BeNil())
+		Expect(responses.GetContainerResponses()[0].Envs[envKey]).To(Equal(pciAddress1))
+		for _, dev := range responses.GetContainerResponses()[0].Devices {
+			Expect(dev.HostPath).ToNot(Equal("/dev/egm4"))
+		}
+	})
+
+	It("Should inject only the matching EGM device on a multi-socket system", func() {
+		readIDFromFile = getFakeIDFromFileForSharedEGM
+		discoverEGMDevices = getFakeMultiSocketEGMDevices
+		devs := []string{pciAddress1, pciAddress2}
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		requests := pluginapi.AllocateRequest{}
+		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
+		ctx := context.Background()
+		responses, err := dpi.Allocate(ctx, &requests)
+		Expect(err).To(BeNil())
+		egm0Found := false
+		for _, dev := range responses.GetContainerResponses()[0].Devices {
+			Expect(dev.HostPath).ToNot(Equal("/dev/egm5"))
+			if dev.HostPath == "/dev/egm4" {
+				egm0Found = true
+			}
+		}
+		Expect(egm0Found).To(BeTrue())
+	})
+
+	It("Should allocate a device when EGM discovery fails", func() {
+		discoverEGMDevices = func() ([]EGMDeviceInfo, error) {
+			return nil, errors.New("egm discovery failed")
+		}
+		devs := []string{pciAddress1}
+		envKey := gpuPrefix + "_FOO"
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		requests := pluginapi.AllocateRequest{}
+		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
+		ctx := context.Background()
+		responses, err := dpi.Allocate(ctx, &requests)
+		Expect(err).To(BeNil())
+		Expect(responses.GetContainerResponses()[0].Envs[envKey]).To(Equal(pciAddress1))
+		for _, dev := range responses.GetContainerResponses()[0].Devices {
+			Expect(dev.HostPath).ToNot(Equal("/dev/egm4"))
+		}
 	})
 
 	It("Should allocate a device without error with iommufd support", func() {
