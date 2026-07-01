@@ -171,6 +171,37 @@ total 0
 lrwxrwxrwx. 1 root root 0 Nov 24 13:33 aa618089-8b16-4d01-a136-25a0f3c73123 -> ../../../devices/pci0000:00/0000:00:03.0/0000:03:00.0/0000:04:09.0/0000:06:00.0/aa618089-8b16-4d01-a136-25a0f3c73123
 ```
 
+--------------------------------------------------------------
+### Preparing a GPU to be used in vGPU mode (Ada Lovelace / Hopper and newer)
+
+Starting with vGPU release 17, GPUs based on Ada Lovelace and newer architectures (for example L40S, H100, H200) no longer expose vGPU instances through mdev. `/sys/bus/mdev` does not exist on these hosts. Instead, vGPU profiles are assigned directly on each SR-IOV Virtual Function through a vendor-specific VFIO sysfs interface, and this plugin discovers vGPUs on such hosts through that interface instead of mdev. The steps below replace the mdev steps above; do not use both on the same GPU.
+
+##### 1. Enable SR-IOV Virtual Functions on the physical GPU.
+```shell
+$ /usr/lib/nvidia/sriov-manage -e 0000:41:00.0
+```
+**0000:41:00.0** -- The PCI BDF of the physical GPU (Physical Function).
+
+##### 2. Find the vGPU types that can be created on a Virtual Function.
+```shell
+$ cat /sys/bus/pci/devices/0000\:41\:00.4/nvidia/creatable_vgpu_types
+1428 : NVIDIA H200X-141C
+1414 : NVIDIA H200X-1-18C
+```
+Each line lists a numeric type id and the corresponding profile name.
+
+##### 3. Create a vGPU on the Virtual Function by writing its type id.
+```shell
+$ echo 1414 > /sys/bus/pci/devices/0000\:41\:00.4/nvidia/current_vgpu_type
+```
+
+##### 4. Confirm the vGPU was created.
+```shell
+$ cat /sys/bus/pci/devices/0000\:41\:00.4/nvidia/current_vgpu_type
+1414
+```
+A non-zero value confirms the Virtual Function now has a vGPU profile configured; this plugin advertises it as a `nvidia.com/<profile-name>` resource, grouped separately from Virtual Functions configured with a different profile.
+
 ## Docs
 ### Deployment
 The Daemonset creation yaml can be used to deploy the device plugin. 
