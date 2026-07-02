@@ -204,11 +204,36 @@ func createVfioVGpuMap() {
 		log.Printf("Error discovering vendor-specific VFIO vGPU VFs: %v", walkErr)
 	}
 
+	// Host-wide catalog fallback: a fully consumed card reduces the
+	// creatable_vgpu_types list of EVERY one of its functions (down to the
+	// header), so the card's own catalog cannot resolve the types of its
+	// already-configured VFs. Merge all per-card catalogs into a host-wide
+	// one, tracking numeric ids that different cards resolve to different
+	// names — those stay ambiguous and are never guessed.
+	globalTypeNames := make(map[string]string)
+	ambiguousTypeIDs := make(map[string]bool)
+	for _, catalog := range vgpuTypeNamesByPF {
+		for typeID, name := range catalog {
+			if existing, ok := globalTypeNames[typeID]; ok {
+				if existing != name {
+					ambiguousTypeIDs[typeID] = true
+				}
+				continue
+			}
+			globalTypeNames[typeID] = name
+		}
+	}
+
 	for _, vf := range vfs {
 		vGpuName, ok := vgpuTypeNamesByPF[vf.pfAddress][vf.typeID]
 		if !ok {
-			log.Printf("Error: could not resolve the name of vGPU type %s configured on VF %s (parent PF %s), skipping device", vf.typeID, vf.device.addr, vf.pfAddress)
-			continue
+			if name, found := globalTypeNames[vf.typeID]; found && !ambiguousTypeIDs[vf.typeID] {
+				log.Printf("Resolved vGPU type %s on VF %s via the host-wide catalog (the card's own catalog is reduced)", vf.typeID, vf.device.addr)
+				vGpuName = name
+			} else {
+				log.Printf("Error: could not resolve the name of vGPU type %s configured on VF %s (parent PF %s), skipping device", vf.typeID, vf.device.addr, vf.pfAddress)
+				continue
+			}
 		}
 		vfioVGpuMap[vGpuName] = append(vfioVGpuMap[vGpuName], vf.device)
 		iommuMap[vf.iommuGroup] = append(iommuMap[vf.iommuGroup], vf.device)

@@ -266,6 +266,75 @@ var _ = Describe("Vendor-specific VFIO vGPU", func() {
 			Expect(bdfToIommuMap).ToNot(HaveKey(vfioVfAddress4))
 		})
 
+		It("Resolves a type via the host-wide catalog when the card's own catalog is reduced", func() {
+			// Fully consumed card: every function's creatable list is reduced
+			// to the header, so the card's own catalog cannot resolve the
+			// configured type.
+			createFakeDevice(vfioVfAddress1, fakeDeviceOptions{
+				vendor:         "0x10de",
+				driver:         "nvidia",
+				physfn:         vfioPfAddress,
+				iommuGroup:     "71",
+				numaNode:       "0",
+				currentType:    "1428",
+				creatableTypes: "ID    : vGPU Name\n",
+			})
+			// A free function on ANOTHER card still lists the full catalog.
+			createFakeDevice(vfioVfAddress5, fakeDeviceOptions{
+				vendor:         "0x10de",
+				driver:         "nvidia",
+				physfn:         vfioPfAddress2,
+				iommuGroup:     "81",
+				numaNode:       "0",
+				currentType:    "0",
+				creatableTypes: "1428 : " + vfioVgpuTypeName1 + "\n",
+			})
+
+			createVfioVGpuMap()
+
+			Expect(vfioVGpuMap).To(HaveLen(1))
+			Expect(vfioVGpuMap[vfioVgpuResourceName1]).To(HaveLen(1))
+			Expect(vfioVGpuMap[vfioVgpuResourceName1][0].addr).To(Equal(vfioVfAddress1))
+		})
+
+		It("Skips a VF whose type maps to conflicting names across cards", func() {
+			// Fully consumed card with a reduced catalog.
+			createFakeDevice(vfioVfAddress1, fakeDeviceOptions{
+				vendor:         "0x10de",
+				driver:         "nvidia",
+				physfn:         vfioPfAddress,
+				iommuGroup:     "71",
+				numaNode:       "0",
+				currentType:    "1428",
+				creatableTypes: "ID    : vGPU Name\n",
+			})
+			// Two other cards resolve the same numeric id to DIFFERENT names —
+			// the host-wide fallback must refuse to guess.
+			createFakeDevice(vfioVfAddress5, fakeDeviceOptions{
+				vendor:         "0x10de",
+				driver:         "nvidia",
+				physfn:         vfioPfAddress2,
+				iommuGroup:     "81",
+				numaNode:       "0",
+				currentType:    "0",
+				creatableTypes: "1428 : " + vfioVgpuTypeName1 + "\n",
+			})
+			createFakeDevice("0000:c1:00.4", fakeDeviceOptions{
+				vendor:         "0x10de",
+				driver:         "nvidia",
+				physfn:         "0000:c1:00.0",
+				iommuGroup:     "91",
+				numaNode:       "0",
+				currentType:    "0",
+				creatableTypes: "1428 : NVIDIA OTHER-NAME\n",
+			})
+
+			createVfioVGpuMap()
+
+			Expect(vfioVGpuMap).To(BeEmpty())
+			Expect(bdfToIommuMap).ToNot(HaveKey(vfioVfAddress1))
+		})
+
 		It("Resolves a type name from a sibling unconfigured VF", func() {
 			// Configured VF with an empty creatable list
 			createFakeDevice(vfioVfAddress1, fakeDeviceOptions{
