@@ -29,6 +29,7 @@
 package device_plugin
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -101,6 +102,10 @@ var _ = Describe("Vendor-specific VFIO vGPU", func() {
 		readNUMANode = readNUMANodeFunc
 		readVfioVgpuFile = readVfioVgpuFileFunc
 		isPhysicalFunction = isPhysicalFunctionFunc
+		// NVML is unavailable in unit tests; resolve nothing by default.
+		resolveVgpuTypeNamesViaNVML = func(pfAddress string) (map[string]string, error) {
+			return map[string]string{}, nil
+		}
 
 		linkDir, err = os.MkdirTemp("", "vfio-vgpu-link")
 		Expect(err).ToNot(HaveOccurred())
@@ -295,6 +300,51 @@ var _ = Describe("Vendor-specific VFIO vGPU", func() {
 			Expect(vfioVGpuMap).To(HaveLen(1))
 			Expect(vfioVGpuMap[vfioVgpuResourceName1]).To(HaveLen(1))
 			Expect(vfioVGpuMap[vfioVgpuResourceName1][0].addr).To(Equal(vfioVfAddress1))
+		})
+
+		It("Resolves a type via NVML when no sysfs catalog lists it", func() {
+			// Every function on the host is consumed: all catalogs reduced.
+			createFakeDevice(vfioVfAddress1, fakeDeviceOptions{
+				vendor:         "0x10de",
+				driver:         "nvidia",
+				physfn:         vfioPfAddress,
+				iommuGroup:     "71",
+				numaNode:       "0",
+				currentType:    "1428",
+				creatableTypes: "ID    : vGPU Name\n",
+			})
+			resolvedPFs := []string{}
+			resolveVgpuTypeNamesViaNVML = func(pfAddress string) (map[string]string, error) {
+				resolvedPFs = append(resolvedPFs, pfAddress)
+				return map[string]string{"1428": vfioVgpuResourceName1}, nil
+			}
+
+			createVfioVGpuMap()
+
+			Expect(vfioVGpuMap).To(HaveLen(1))
+			Expect(vfioVGpuMap[vfioVgpuResourceName1]).To(HaveLen(1))
+			Expect(vfioVGpuMap[vfioVgpuResourceName1][0].addr).To(Equal(vfioVfAddress1))
+			Expect(resolvedPFs).To(Equal([]string{vfioPfAddress}))
+		})
+
+		It("Skips the VF when NVML resolution fails too", func() {
+			createFakeDevice(vfioVfAddress1, fakeDeviceOptions{
+				vendor:         "0x10de",
+				driver:         "nvidia",
+				physfn:         vfioPfAddress,
+				iommuGroup:     "71",
+				numaNode:       "0",
+				currentType:    "1428",
+				creatableTypes: "ID    : vGPU Name\n",
+			})
+			resolveVgpuTypeNamesViaNVML = func(pfAddress string) (map[string]string, error) {
+				return nil, errors.New("nvml unavailable")
+			}
+
+			createVfioVGpuMap()
+
+			Expect(vfioVGpuMap).To(BeEmpty())
+			Expect(bdfToIommuMap).ToNot(HaveKey(vfioVfAddress1))
 		})
 
 		It("Skips a VF whose type maps to conflicting names across cards", func() {
