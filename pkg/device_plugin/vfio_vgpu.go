@@ -224,11 +224,30 @@ func createVfioVGpuMap() {
 		}
 	}
 
+	// NVML is the last-resort resolution source, scoped per card like the
+	// sysfs catalogs; results are cached per PF for the duration of the scan.
+	nvmlNamesByPF := make(map[string]map[string]string)
+	nvmlSupportedNames := func(pfAddress string) map[string]string {
+		if names, done := nvmlNamesByPF[pfAddress]; done {
+			return names
+		}
+		names, err := resolveVgpuTypeNamesViaNVML(pfAddress)
+		if err != nil {
+			log.Printf("Could not resolve supported vGPU types of PF %s via NVML: %v", pfAddress, err)
+			names = map[string]string{}
+		}
+		nvmlNamesByPF[pfAddress] = names
+		return names
+	}
+
 	for _, vf := range vfs {
 		vGpuName, ok := vgpuTypeNamesByPF[vf.pfAddress][vf.typeID]
 		if !ok {
 			if name, found := globalTypeNames[vf.typeID]; found && !ambiguousTypeIDs[vf.typeID] {
 				log.Printf("Resolved vGPU type %s on VF %s via the host-wide catalog (the card's own catalog is reduced)", vf.typeID, vf.device.addr)
+				vGpuName = name
+			} else if name, found := nvmlSupportedNames(vf.pfAddress)[vf.typeID]; found {
+				log.Printf("Resolved vGPU type %s on VF %s via NVML (no sysfs catalog lists it)", vf.typeID, vf.device.addr)
 				vGpuName = name
 			} else {
 				log.Printf("Error: could not resolve the name of vGPU type %s configured on VF %s (parent PF %s), skipping device", vf.typeID, vf.device.addr, vf.pfAddress)
