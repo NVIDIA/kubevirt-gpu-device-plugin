@@ -94,6 +94,9 @@ func InitiateDevicePlugin() {
 	//Identifies vGPUs exposed through the vendor-specific VFIO framework
 	//(Ada/Hopper+ GPUs, which do not support mdev)
 	createVfioVGpuMap()
+	//Wires NVLink fabric partition activation into Allocate for NVSwitch /
+	//FABRIC_MODE=2 systems (no-op otherwise)
+	initFabricActivation()
 	//Creates and starts device plugin
 	createDevicePlugins()
 }
