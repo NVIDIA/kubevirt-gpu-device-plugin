@@ -3,6 +3,7 @@ module kubevirt-gpu-device-plugin
 go 1.25.0
 
 require (
+	github.com/NVIDIA/go-nvfm v0.0.0-20260629235037-b587f11880ea
 	github.com/NVIDIA/go-nvml v0.13.0-1
 	github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48
 	github.com/fsnotify/fsnotify v1.9.0

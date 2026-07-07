@@ -41,7 +41,9 @@
 // bdf.go and partition.go) builds and unit-tests on any OS, while the actual
 // libnvfm binding lives behind a build tag:
 //
-//   - fabric_cgo.go  (//go:build linux && cgo) links libnvfm.so.1 via cgo.
+//   - fabric_cgo.go  (//go:build linux && cgo) drives libnvfm through the
+//     official Go bindings, github.com/NVIDIA/go-nvfm (which dlopen's libnvfm at
+//     runtime; cgo is required to compile it).
 //   - fabric_stub.go (//go:build !(linux && cgo)) returns ErrUnsupported so the
 //     rest of the tree still builds on developer machines and CGO_ENABLED=0.
 package fabric

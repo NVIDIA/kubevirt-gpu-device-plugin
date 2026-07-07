@@ -36,10 +36,12 @@ ARG FABRIC_MANAGER_VERSION=580.126.20-1
 
 RUN yum install -y wget tar gzip make gcc glibc-devel binutils xz
 
-# Fetch libnvfm.so.1 from the CUDA repository package and place it where the
-# linker finds it. Only the versioned shared object is needed; the plugin
-# declares the FM ABI itself (pkg/fabric), so the proprietary headers are not
-# required and are not vendored.
+# Fetch libnvfm.so.1 from the CUDA repository package and stage it for the
+# runtime image. The plugin drives libnvfm through the official go-nvfm bindings,
+# which dlopen the library at runtime, so it is not needed at link time (only the
+# versioned shared object is copied into the runtime image below). go-nvfm ships
+# its own copy of the FM SDK headers, so the proprietary headers are not vendored
+# into this repository.
 RUN set -eux; \
     arch="$(uname -m)"; \
     case "${arch}" in \
@@ -98,8 +100,9 @@ LABEL description="See summary"
 
 COPY --from=builder /workspace/nvidia-kubevirt-gpu-device-plugin /usr/bin/
 COPY --from=builder /workspace/utils/pci.ids /usr/pci.ids
-# libnvfm.so.1 for the fabric partition activation binding. The plugin links it
-# (NEEDED), so it must be present in the runtime image on the loader search path.
+# libnvfm.so.1 for the fabric partition activation binding. go-nvfm dlopen's it
+# at runtime, so it must be present in the runtime image on the loader search
+# path (go-nvfm is pointed at this versioned SONAME by pkg/fabric).
 COPY --from=builder /usr/lib64/libnvfm.so.1 /usr/lib/x86_64-linux-gnu/libnvfm.so.1
 
 USER 0:0

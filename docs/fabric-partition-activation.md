@@ -25,7 +25,7 @@ The consequence for this feature:
 
 ## `pkg/fabric` — the FM SDK binding
 
-`pkg/fabric` wraps the FM SDK (`libnvfm.so.1`, header API `nv_fm_agent`). The public surface:
+`pkg/fabric` wraps the FM SDK (`libnvfm.so.1`, header API `nv_fm_agent`) through the official Go bindings, [`github.com/NVIDIA/go-nvfm`](https://github.com/NVIDIA/go-nvfm). The public surface:
 
 ```go
 type Client interface {
@@ -38,11 +38,11 @@ type Client interface {
 func New(addr string) (Client, error) // fmLibInit + fmConnect
 ```
 
-`New` maps to `fmLibInit` + `fmConnect`; `Close` maps to `fmDisconnect` + `fmLibShutdown`. The proven call sequence (`fmLibInit` → `fmConnect` → `fmGetSupportedFabricPartitions` → `fmActivateFabricPartitionWithVFs` → `fmDeactivateFabricPartition` → `fmDisconnect` → `fmLibShutdown`) is expressed by this interface. `addr` is either the Unix socket (`DefaultUnixSocket = /var/run/nvidia-fabricmanager/socket`) or the TCP command interface (`DefaultTCPAddress = 127.0.0.1:6666`).
+`New` maps to `nvfm.Init` + `nvfm.Connect`; `Close` maps to `handle.Disconnect` + `nvfm.Shutdown`. The proven call sequence (`fmLibInit` → `fmConnect` → `fmGetSupportedFabricPartitions` → `fmActivateFabricPartitionWithVFs` → `fmDeactivateFabricPartition` → `fmDisconnect` → `fmLibShutdown`) is expressed by this interface, with go-nvfm supplying each underlying call. `addr` is either the Unix socket (`DefaultUnixSocket = /var/run/nvidia-fabricmanager/socket`) or the TCP command interface (`DefaultTCPAddress = 127.0.0.1:6666`).
 
 ### Struct-version handling
 
-FM's SDK structs are versioned: each has a leading `.version` field set to `MAKE_FM_PARAM_VERSION(type, ver) = sizeof(type) | (ver << 24)`, and FM rejects a mismatched struct with `FM_ST_VERSION_MISMATCH`. The binding keeps that `sizeof`-based arithmetic in small C helpers (`fabric_connect`, `fabric_partition_list_version`) so the value is always computed from the exact struct the binding compiled against, never hardcoded. We use `fmConnectParams_v2` (version 2) and `fmFabricPartitionList_v2` (version 1), matching the SDK.
+FM's SDK structs are versioned: each has a leading `.version` field set to `MAKE_FM_PARAM_VERSION(type, ver) = sizeof(type) | (ver << 24)`, and FM rejects a mismatched struct with `FM_ST_VERSION_MISMATCH`. go-nvfm computes those versions from the exact structs its bindings compiled against (its `STRUCT_VERSION` reflection helper), never hardcoded, and initialises the `.version` field for us — it uses `fmConnectParams_t` (version 2) and `fmFabricPartitionList_t` (version 1), matching the SDK.
 
 ### Return-code → error mapping
 
@@ -57,15 +57,15 @@ Every `fmReturn_t` code from `nv_fm_types.h` is transcribed into the `Return` ty
 
 Options considered for talking to FM:
 
-1. **cgo against `libnvfm.so.1` (chosen).** Direct, in-process, uses the same ABI NVIDIA ships and versions. The binding declares the ABI inline in the cgo preamble (self-contained; NVIDIA's proprietary headers are deliberately **not** vendored — their licence forbids redistribution) and links the versioned soname with `-l:libnvfm.so.1`. Cost: the image must ship a `libnvfm.so.1` whose ABI is compatible with the host FM daemon, and cgo must be enabled in the build (it already is).
+1. **cgo against `libnvfm` via the official go-nvfm bindings (chosen).** Direct, in-process, uses the same ABI NVIDIA ships and versions. `github.com/NVIDIA/go-nvfm` `dlopen`s `libnvfm.so` at runtime (as the vendored `go-nvml` does for `libnvidia-ml`) rather than linking it, and ships its own copy of the FM SDK headers, so NVIDIA's proprietary headers are not vendored into this repository. Cost: the image must ship a `libnvfm.so.1` whose ABI is compatible with the host FM daemon, and cgo must be enabled in the build (it already is). We point go-nvfm at the versioned SONAME `libnvfm.so.1` (the runtime image ships only that, not the unversioned `-dev` symlink).
 2. **Subprocess `nvidia-smi` / a helper binary.** `nvidia-smi` can list and activate partitions, but shelling out per allocation is slower, has a coarse text/return-code interface, needs the tool present in a distroless image, and still couples to an NVIDIA binary's CLI contract. It buys nothing over cgo while being harder to error-handle precisely.
 3. **Hand-rolled socket protocol to `127.0.0.1:6666` / the Unix socket.** FM's wire protocol is an internal, undocumented, unstable protobuf/RPC. Reimplementing it would be a large, fragile surface that breaks on any FM release. Rejected.
 
-A fourth variant — cgo but `dlopen`-ing `libnvfm.so.1` at runtime (as the vendored `go-nvml` does for `libnvidia-ml`) — is a reasonable evolution if we want the plugin binary to start without the lib present and degrade gracefully. It trades link-time coupling for `dlopen`/`dlsym` boilerplate. The current design gets the same "don't hard-fail off-NVSwitch" behaviour more simply through build tags plus a runtime `ErrFabricNotSupported` check, so direct linking is chosen for now; `dlopen` is noted as the fallback if bundling `libnvfm` into the image proves awkward.
+An earlier iteration declared the FM ABI inline in the cgo preamble and linked the versioned soname with `-l:libnvfm.so.1`. Switching to go-nvfm removes that hand-maintained ABI transcription in favour of NVIDIA's officially maintained bindings, and moves from link-time coupling to a runtime `dlopen`, so the plugin binary no longer has `libnvfm.so.1` as a hard `NEEDED` dependency.
 
 ### Version coupling with the daemon
 
-`libnvfm` and the FM daemon are version-coupled by the struct-version scheme. The public `nvidia-fabricmanager-dev` package (`580.126.20`) links cleanly against a host running FM `580.159.01` — verified: `fmConnect` + read + write all work. Newer FM daemons should stay compatible as long as the struct versions we use are still accepted; a mismatch surfaces as `FM_ST_VERSION_MISMATCH` from `fmConnect`/`fmGetSupportedFabricPartitions`, which the error mapping reports clearly. The bundled `libnvfm.so.1` should be kept in the same major-version ballpark as the deployed driver/FM.
+`libnvfm` and the FM daemon are version-coupled by the struct-version scheme. The public `nvidia-fabricmanager-dev` package (`580.126.20`) is ABI-compatible with a host running FM `580.159.01` — verified: `fmConnect` + read + write all work. Newer FM daemons should stay compatible as long as the struct versions we use are still accepted; a mismatch surfaces as `FM_ST_VERSION_MISMATCH` from `fmConnect`/`fmGetSupportedFabricPartitions`, which the error mapping reports clearly. The bundled `libnvfm.so.1` should be kept in the same major-version ballpark as the deployed driver/FM.
 
 ### Portability / build tags
 
@@ -136,7 +136,7 @@ Either way, definitive **non-fabric** cases are never failed — they are simply
 
 ## Image / `libnvfm` bundling
 
-The plugin builds `CGO_ENABLED=1` (already the case in `deployments/container/Dockerfile.distroless`). The binding links `libnvfm.so.1` (`NEEDED` in the binary), so both the builder and the runtime image must contain it. The Dockerfile fetches a **pinned** `libnvfm.so.1` from the CUDA repository package at build time (`ARG FABRIC_MANAGER_VERSION`), uses it to link in the builder, and copies it into the distroless runtime image on the loader path. Only the versioned shared object is needed — the plugin declares the FM ABI itself (`pkg/fabric`), so NVIDIA's proprietary headers are neither required nor vendored.
+The plugin builds `CGO_ENABLED=1` (already the case in `deployments/container/Dockerfile.distroless`); cgo is required to compile the go-nvfm bindings. go-nvfm `dlopen`s `libnvfm.so.1` at runtime, so the binary does not link it (`--unresolved-symbols=ignore-in-object-files`) — only the runtime image needs it on the loader path. The Dockerfile fetches a **pinned** `libnvfm.so.1` from the CUDA repository package at build time (`ARG FABRIC_MANAGER_VERSION`) and copies it into the distroless runtime image. Only the versioned shared object is needed — go-nvfm vendors the FM SDK headers, so NVIDIA's proprietary headers are neither required nor vendored into this repository.
 
 **Version coupling.** `libnvfm` and the FM daemon are coupled by the struct-version scheme, so `FABRIC_MANAGER_VERSION` should match the deployed daemon's major version (a mismatch surfaces as `FM_ST_VERSION_MISMATCH` from `fmConnect`/`fmGetSupportedFabricPartitions`). The default is pinned to a version verified against the target host's daemon.
 
@@ -158,7 +158,7 @@ MIG-mode GPUs disable NVLink and are not part of the NVSwitch fabric, so a MIG g
 
 ## Status
 
-- `pkg/fabric` binding (cgo + stub), return-code mapping, BDF parsing, address-type helper, and the VF→partition resolver — implemented and unit-tested; the cgo binding is verified to compile and link against `libnvfm` on linux/amd64.
+- `pkg/fabric` binding (go-nvfm-backed cgo + stub), return-code mapping, BDF parsing, address-type helper, and the VF→partition resolver — implemented and unit-tested; the cgo binding is verified to compile against go-nvfm under linux + cgo.
 - `Allocate` activation into `GenericDevicePlugin` (single-VF activation, MIG-skip, `isActive` steady-state skip, fail-mode) and the pod-resources reconciler for deactivation — implemented and unit-tested with a fake Fabric Manager client.
 
 ## Draft PR description
@@ -171,7 +171,7 @@ On NVSwitch systems (HGX H100/H200) running SR-IOV vGPU with Fabric Manager in `
 
 This change activates the VF's single-GPU fabric partition during `Allocate`, before the guest starts, giving working CUDA from the first init with per-VM NVLink isolation:
 
-- A self-contained `pkg/fabric` wraps `libnvfm` (the `nv_fm_agent` API) via cgo, with a portable stub so non-linux / `CGO_ENABLED=0` builds are unaffected. The FM ABI is declared in the binding (headers not vendored).
+- A self-contained `pkg/fabric` wraps `libnvfm` (the `nv_fm_agent` API) through the official [go-nvfm](https://github.com/NVIDIA/go-nvfm) bindings, with a portable stub so non-linux / `CGO_ENABLED=0` builds are unaffected. go-nvfm `dlopen`s `libnvfm` at runtime and ships the FM SDK headers, so no proprietary headers are vendored here.
 - `Allocate` resolves the VF → parent PF → FM `physicalId` (NVML module id) → single-GPU partition, matched strictly on `physicalId` (never PCI order), then activates the partition for exactly that VF (`fmActivateFabricPartitionWithVFs` takes one VF per GPU).
 - MIG-mode GPUs have NVLink disabled and are not in the fabric, so their VFs need no activation and are skipped (`nvmlDeviceGetMigMode`). Only whole-card VFs are activated.
 - Activation is gated by `FABRIC_PARTITION_ACTIVATION` (default `auto`), a no-op on non-NVSwitch systems and classic passthrough GPUs. `FABRIC_FAIL_MODE` (default `closed`) chooses whether an FM error fails the allocation or is logged and allowed. A pod-resources reconciler deactivates a partition once its VF is gone.
