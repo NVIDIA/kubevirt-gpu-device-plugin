@@ -97,11 +97,14 @@ var isPhysicalFunction = isPhysicalFunctionFunc
 // PCI address, found via each VF's "physfn" symlink) rather than merged
 // globally across the whole host, because vGPU type ids are only unique
 // within one physical card - the same numeric id can mean a different
-// profile on a different card, even of the same GPU model. The corner case
-// of every function of a card being simultaneously configured with a
-// reduced catalog that omits a given type id is not handled here; if this
-// is observed in practice, a cached per-card catalog (refreshed once at
-// startup) or an NVML-based lookup would be the natural fallback.
+// profile on a different card, even of the same GPU model. When every
+// function of a card is simultaneously configured and its catalog is
+// reduced to the header, the card's own sysfs can no longer resolve the
+// type; the plugin then falls back to a per-card NVML lookup (whose
+// supported-type list does not shrink as capacity is allocated) and, if
+// NVML is unavailable too, skips the VF rather than borrowing another
+// card's mapping, since no invariant guarantees that two cards assign the
+// same numeric id to the same profile.
 //
 // Discovered VFs are added to the shared iommuMap and bdfToIommuMap used by
 // GenericDevicePlugin, so Allocate and the health check for these devices
@@ -204,28 +207,11 @@ func createVfioVGpuMap() {
 		log.Printf("Error discovering vendor-specific VFIO vGPU VFs: %v", walkErr)
 	}
 
-	// Host-wide catalog fallback: a fully consumed card reduces the
-	// creatable_vgpu_types list of EVERY one of its functions (down to the
-	// header), so the card's own catalog cannot resolve the types of its
-	// already-configured VFs. Merge all per-card catalogs into a host-wide
-	// one, tracking numeric ids that different cards resolve to different
-	// names — those stay ambiguous and are never guessed.
-	globalTypeNames := make(map[string]string)
-	ambiguousTypeIDs := make(map[string]bool)
-	for _, catalog := range vgpuTypeNamesByPF {
-		for typeID, name := range catalog {
-			if existing, ok := globalTypeNames[typeID]; ok {
-				if existing != name {
-					ambiguousTypeIDs[typeID] = true
-				}
-				continue
-			}
-			globalTypeNames[typeID] = name
-		}
-	}
-
-	// NVML is the last-resort resolution source, scoped per card like the
-	// sysfs catalogs; results are cached per PF for the duration of the scan.
+	// NVML is the fallback resolution source, scoped per card like the sysfs
+	// catalogs and consulted only when the card's own catalog cannot resolve
+	// a configured type (e.g. a fully consumed card whose creatable list is
+	// reduced to the header on every function). Results are cached per PF for
+	// the duration of the scan.
 	nvmlNamesByPF := make(map[string]map[string]string)
 	nvmlSupportedNames := func(pfAddress string) map[string]string {
 		if names, done := nvmlNamesByPF[pfAddress]; done {
@@ -243,14 +229,16 @@ func createVfioVGpuMap() {
 	for _, vf := range vfs {
 		vGpuName, ok := vgpuTypeNamesByPF[vf.pfAddress][vf.typeID]
 		if !ok {
-			if name, found := globalTypeNames[vf.typeID]; found && !ambiguousTypeIDs[vf.typeID] {
-				log.Printf("Resolved vGPU type %s on VF %s via the host-wide catalog (the card's own catalog is reduced)", vf.typeID, vf.device.addr)
-				vGpuName = name
-			} else if name, found := nvmlSupportedNames(vf.pfAddress)[vf.typeID]; found {
-				log.Printf("Resolved vGPU type %s on VF %s via NVML (no sysfs catalog lists it)", vf.typeID, vf.device.addr)
+			// The card's own sysfs catalog does not resolve this type. Fall
+			// back to the parent PF's NVML supported-type list, never to
+			// another card's catalog: numeric vGPU type ids are only unique
+			// within one physical card, so borrowing a sibling card's mapping
+			// could advertise the VF under the wrong profile.
+			if name, found := nvmlSupportedNames(vf.pfAddress)[vf.typeID]; found {
+				log.Printf("Resolved vGPU type %s on VF %s via NVML (the card's own sysfs catalog does not list it)", vf.typeID, vf.device.addr)
 				vGpuName = name
 			} else {
-				log.Printf("Error: could not resolve the name of vGPU type %s configured on VF %s (parent PF %s), skipping device", vf.typeID, vf.device.addr, vf.pfAddress)
+				log.Printf("Error: could not resolve the name of vGPU type %s configured on VF %s (parent PF %s) from the card's own sysfs catalog or NVML, skipping device", vf.typeID, vf.device.addr, vf.pfAddress)
 				continue
 			}
 		}

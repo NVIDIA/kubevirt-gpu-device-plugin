@@ -271,10 +271,9 @@ var _ = Describe("Vendor-specific VFIO vGPU", func() {
 			Expect(bdfToIommuMap).ToNot(HaveKey(vfioVfAddress4))
 		})
 
-		It("Resolves a type via the host-wide catalog when the card's own catalog is reduced", func() {
-			// Fully consumed card: every function's creatable list is reduced
-			// to the header, so the card's own catalog cannot resolve the
-			// configured type.
+		It("Resolves a reduced-catalog type via the parent PF's NVML, never another card's catalog", func() {
+			// Target card is fully consumed: its creatable list is reduced to
+			// the header, so the card's own catalog cannot resolve the type.
 			createFakeDevice(vfioVfAddress1, fakeDeviceOptions{
 				vendor:         "0x10de",
 				driver:         "nvidia",
@@ -284,7 +283,10 @@ var _ = Describe("Vendor-specific VFIO vGPU", func() {
 				currentType:    "1428",
 				creatableTypes: "ID    : vGPU Name\n",
 			})
-			// A free function on ANOTHER card still lists the full catalog.
+			// A free function on ANOTHER card maps the SAME numeric id to a
+			// DIFFERENT profile. The target card contributed no value, so this
+			// entry would look "unambiguous" to a host-wide merge, but numeric
+			// ids are only card-local: it must never be borrowed.
 			createFakeDevice(vfioVfAddress5, fakeDeviceOptions{
 				vendor:         "0x10de",
 				driver:         "nvidia",
@@ -292,14 +294,24 @@ var _ = Describe("Vendor-specific VFIO vGPU", func() {
 				iommuGroup:     "81",
 				numaNode:       "0",
 				currentType:    "0",
-				creatableTypes: "1428 : " + vfioVgpuTypeName1 + "\n",
+				creatableTypes: "1428 : NVIDIA OTHER-NAME\n",
 			})
+			// NVML is the authoritative per-PF source and reports the correct
+			// profile for the target card's id 1428.
+			resolveVgpuTypeNamesViaNVML = func(pfAddress string) (map[string]string, error) {
+				if pfAddress == vfioPfAddress {
+					return map[string]string{"1428": vfioVgpuResourceName1}, nil
+				}
+				return map[string]string{}, nil
+			}
 
 			createVfioVGpuMap()
 
 			Expect(vfioVGpuMap).To(HaveLen(1))
 			Expect(vfioVGpuMap[vfioVgpuResourceName1]).To(HaveLen(1))
 			Expect(vfioVGpuMap[vfioVgpuResourceName1][0].addr).To(Equal(vfioVfAddress1))
+			// The other card's mapping for id 1428 was never borrowed.
+			Expect(vfioVGpuMap).ToNot(HaveKey("NVIDIA_OTHER-NAME"))
 		})
 
 		It("Resolves a type via NVML when no sysfs catalog lists it", func() {
@@ -347,8 +359,9 @@ var _ = Describe("Vendor-specific VFIO vGPU", func() {
 			Expect(bdfToIommuMap).ToNot(HaveKey(vfioVfAddress1))
 		})
 
-		It("Skips a VF whose type maps to conflicting names across cards", func() {
-			// Fully consumed card with a reduced catalog.
+		It("Skips a reduced-catalog VF when NVML is unavailable, never borrowing another card's catalog", func() {
+			// Target card is fully consumed: its creatable list is reduced to
+			// the header.
 			createFakeDevice(vfioVfAddress1, fakeDeviceOptions{
 				vendor:         "0x10de",
 				driver:         "nvidia",
@@ -358,8 +371,9 @@ var _ = Describe("Vendor-specific VFIO vGPU", func() {
 				currentType:    "1428",
 				creatableTypes: "ID    : vGPU Name\n",
 			})
-			// Two other cards resolve the same numeric id to DIFFERENT names —
-			// the host-wide fallback must refuse to guess.
+			// Another card maps the same numeric id to a DIFFERENT profile.
+			// With NVML unavailable, the target VF must be skipped rather than
+			// advertised under this other card's (card-local) mapping.
 			createFakeDevice(vfioVfAddress5, fakeDeviceOptions{
 				vendor:         "0x10de",
 				driver:         "nvidia",
@@ -367,17 +381,11 @@ var _ = Describe("Vendor-specific VFIO vGPU", func() {
 				iommuGroup:     "81",
 				numaNode:       "0",
 				currentType:    "0",
-				creatableTypes: "1428 : " + vfioVgpuTypeName1 + "\n",
-			})
-			createFakeDevice("0000:c1:00.4", fakeDeviceOptions{
-				vendor:         "0x10de",
-				driver:         "nvidia",
-				physfn:         "0000:c1:00.0",
-				iommuGroup:     "91",
-				numaNode:       "0",
-				currentType:    "0",
 				creatableTypes: "1428 : NVIDIA OTHER-NAME\n",
 			})
+			resolveVgpuTypeNamesViaNVML = func(pfAddress string) (map[string]string, error) {
+				return nil, errors.New("nvml unavailable")
+			}
 
 			createVfioVGpuMap()
 
