@@ -1,3 +1,9 @@
+# This manifest mounts only /dev/vfio and runs unprivileged. It covers every
+# node where each card still exposes its creatable_vgpu_types catalog on at
+# least one function. On a fully consumed node the plugin resolves vGPU type
+# names through NVML instead, which needs the host driver library and the
+# NVIDIA device nodes - use nvidia-kubevirt-gpu-device-plugin-nvml.yaml (see
+# the README section "NVML fallback (fully consumed nodes)") on such nodes.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
