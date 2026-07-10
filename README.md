@@ -211,6 +211,24 @@ kubectl apply -f nvidia-kubevirt-gpu-device-plugin.yaml
 
 Example YAML files for creating VMs with GPU/vGPU are in the `examples` folder
 
+#### vGPU profile timing (vendor-specific VFIO)
+
+The plugin scans the vendor-specific VFIO vGPU Virtual Functions once at startup and does not re-scan while running. Every profile a node should advertise must therefore be configured on its Virtual Functions (step 3 of "Preparing a GPU to be used in vGPU mode (Ada Lovelace / Hopper and newer)") **before** the device plugin pod starts. A Virtual Function whose profile is created or changed after startup is not picked up until the pod restarts. After a node reboot, order the plugin after whatever recreates the Virtual Functions (for example an init container that waits until the count of configured Virtual Functions is non-zero and stable) so it discovers the full set. Dynamic rediscovery of profiles created or changed while the plugin is running is tracked as a separate follow-up (PR link to be added).
+
+#### NVML fallback (fully consumed nodes)
+
+The profile name of a configured Virtual Function is normally read from its card's `creatable_vgpu_types` catalog. On a fully consumed card that catalog is reduced to its header on every function, so the plugin resolves the configured type ids through NVML instead (`GetSupportedVgpus`, whose list does not shrink as capacity is allocated). This path is reached only on fully consumed nodes; the default manifest does not enable it.
+
+NVML needs two things inside the container:
+
+- **`libnvidia-ml.so.1`** from the host driver, loadable by the dynamic linker. Bind the **single file**, not the host library directory: putting the host lib directory on `LD_LIBRARY_PATH` drags the host glibc into the container and breaks the dynamic linker. This single-file requirement was confirmed on hardware.
+- **The NVIDIA device nodes** the queries touch: `/dev/nvidiactl` (the NVML control device) and the per-GPU `/dev/nvidiaN` for each physical card. The management-only queries this plugin makes (`DeviceGetHandleByPciBusId`, `GetSupportedVgpus`, `GetName`) do not open a CUDA context or MIG capabilities, so `/dev/nvidia-uvm`, `/dev/nvidia-uvm-tools` and `/dev/nvidia-caps` are not needed. `/dev/nvidiactl` plus the per-GPU nodes were confirmed on hardware; the narrower "uvm/caps not required" scope is inferred from the set of NVML calls above, not separately tested.
+
+There are two supported ways to provide these:
+
+1. **NVIDIA Container Toolkit (`runtimeClassName: nvidia`) — minimally privileged, recommended.** When the toolkit is installed on the node, set `runtimeClassName: nvidia` and the container env `NVIDIA_VISIBLE_DEVICES=all` and `NVIDIA_DRIVER_CAPABILITIES=utility` (the `utility` capability is the one that provides NVML). The toolkit's runtime hook then injects `libnvidia-ml.so.1` and the device nodes and adds the matching device-cgroup rules, so the container stays non-privileged. This is the standard toolkit mechanism; the exact `runtimeClassName` form was not part of this feature's hardware validation.
+2. **hostPath — privileged.** `manifests/nvidia-kubevirt-gpu-device-plugin-nvml.yaml` single-file-binds `libnvidia-ml.so.1`, sets `LD_LIBRARY_PATH`, mounts only `/dev/nvidiactl` and the per-GPU `/dev/nvidiaN` nodes (not the whole host `/dev`) and runs `privileged: true`. A hostPath device node is not added to the container's device cgroup, so a non-privileged container is denied when it opens the node regardless of the mount, and a plain pod spec has no field to grant a single host device node; `privileged: true` is the only pod-spec-native way to make host device nodes usable without the toolkit. The hardware validation of the fallback used this hostPath + privileged mechanism with the whole host `/dev` mounted; this manifest narrows that to `/dev/nvidiactl` plus the per-GPU nodes, which are the only device nodes the NVML calls above use. Point the `libnvidia-ml.so.1` hostPath at wherever the host driver installed it (find it with `ldconfig -p | grep libnvidia-ml`).
+
 ### Build
 
 Build executable binary using make:
