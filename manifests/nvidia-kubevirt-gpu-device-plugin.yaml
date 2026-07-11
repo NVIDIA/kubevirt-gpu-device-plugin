@@ -27,6 +27,13 @@ spec:
       containers:
       - name: nvidia-kubevirt-gpu-dp-ctr
         image: nvcr.io/nvidia/kubevirt-gpu-device-plugin:v1.5.0
+        # By default vendor-specific VFIO vGPU profiles are scanned once at
+        # startup. Uncomment to periodically rediscover profiles configured or
+        # changed while the plugin runs (see the README "vGPU profile timing"
+        # section). The value is a Go duration; unset/empty disables it.
+        # env:
+        # - name: VFIO_VGPU_RESCAN_INTERVAL
+        #   value: "30s"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

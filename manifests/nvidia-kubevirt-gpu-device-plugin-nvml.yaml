@@ -56,6 +56,12 @@ spec:
           # the linker.
           - name: LD_LIBRARY_PATH
             value: /host-driver-lib
+          # Uncomment to periodically rediscover vGPU profiles configured or
+          # changed while the plugin runs (see the README "vGPU profile timing"
+          # section). Each rescan may consult NVML on a fully consumed card, so
+          # pick an interval no shorter than needed. Unset/empty disables it.
+          # - name: VFIO_VGPU_RESCAN_INTERVAL
+          #   value: "30s"
         volumeMounts:
           - name: device-plugin
             mountPath: /var/lib/kubelet/device-plugins
