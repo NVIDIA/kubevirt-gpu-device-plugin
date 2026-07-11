@@ -39,6 +39,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 const (
@@ -75,14 +76,105 @@ var whitespaceRegexp = regexp.MustCompile(`\s+`)
 // through the vendor-specific VFIO framework
 var vfioVGpuMap map[string][]NvidiaGpuDevice
 
+// mapsMu guards the shared discovery maps consumed by GenericDevicePlugin
+// (iommuMap, bdfToIommuMap, vfioVGpuMap). It is only ever contended when the
+// vGPU rediscovery goroutine is running: the startup discovery path completes
+// before any plugin goroutine starts, so with rediscovery disabled the lock is
+// taken exactly once per map by a single goroutine and adds no observable cost.
+var mapsMu sync.RWMutex
+
+// vfioIommuBDFs records the (PCI address -> IOMMU group) entries that the
+// vendor-specific VFIO vGPU discovery last installed into iommuMap and
+// bdfToIommuMap. Rediscovery uses it to remove its own previous contribution
+// without disturbing entries owned by the GPU-passthrough discovery
+// (createIommuDeviceMap), which shares those two maps.
+var vfioIommuBDFs = map[string]string{}
+
+// resolvedVfioVF is a single vendor-specific VFIO vGPU Virtual Function whose
+// configured profile name has already been resolved. It is the pure output of
+// discovery, decoupled from the shared maps so the same discovery can feed both
+// the one-shot startup path and the periodic rediscovery diff.
+type resolvedVfioVF struct {
+	profileName string
+	device      NvidiaGpuDevice
+	iommuGroup  string
+}
+
 var readVfioVgpuFile = readVfioVgpuFileFunc
 var isPhysicalFunction = isPhysicalFunctionFunc
 
-// Discovers all Nvidia vGPUs exposed through the vendor-specific VFIO
-// framework and creates the corresponding maps. These vGPUs are SR-IOV VFs
-// that stay bound to the "nvidia" driver and expose their vGPU state under
-// /sys/bus/pci/devices/<address>/nvidia/, unlike mdev-backed vGPUs which are
-// discovered under /sys/bus/mdev/devices by createVgpuIDMap.
+// discoverVfioVGpus is the discovery entry point, overridable in tests. It
+// performs a full sysfs (and, as a fallback, NVML) scan and returns the
+// resolved VFs without touching any shared state.
+var discoverVfioVGpus = discoverVfioVGpusFunc
+
+// createVfioVGpuMap performs the one-shot startup discovery of vendor-specific
+// VFIO vGPU VFs and publishes the result into the shared maps consumed by
+// GenericDevicePlugin. It preserves the historical behavior of this function;
+// the scan itself now lives in discoverVfioVGpusFunc so periodic rediscovery
+// can reuse it.
+func createVfioVGpuMap() {
+	resolved := discoverVfioVGpus()
+	mapsMu.Lock()
+	defer mapsMu.Unlock()
+	publishVfioVGpusLocked(resolved)
+}
+
+// publishVfioVGpusLocked rebuilds vfioVGpuMap from the freshly resolved VFs and
+// replaces this discovery's contribution to the shared iommuMap and
+// bdfToIommuMap, leaving GPU-passthrough entries untouched. Callers must hold
+// mapsMu for writing.
+func publishVfioVGpusLocked(resolved []resolvedVfioVF) {
+	// iommuMap and bdfToIommuMap are shared with the GPU passthrough
+	// discovery (createIommuDeviceMap) and consumed by GenericDevicePlugin.
+	// Initialize them here too so this discovery also works standalone, e.g.
+	// in tests that call it directly.
+	if iommuMap == nil {
+		iommuMap = make(map[string][]NvidiaGpuDevice)
+	}
+	if bdfToIommuMap == nil {
+		bdfToIommuMap = make(map[string]string)
+	}
+
+	// Remove the VF entries this discovery installed on the previous run so a
+	// VF that has since disappeared or moved profiles no longer lingers in the
+	// shared maps. Only addresses this discovery owns are touched.
+	for bdf, group := range vfioIommuBDFs {
+		delete(bdfToIommuMap, bdf)
+		devices, ok := iommuMap[group]
+		if !ok {
+			continue
+		}
+		filtered := devices[:0:0]
+		for _, dev := range devices {
+			if dev.addr != bdf {
+				filtered = append(filtered, dev)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(iommuMap, group)
+		} else {
+			iommuMap[group] = filtered
+		}
+	}
+
+	vfioVGpuMap = make(map[string][]NvidiaGpuDevice)
+	installed := make(map[string]string, len(resolved))
+	for _, vf := range resolved {
+		vfioVGpuMap[vf.profileName] = append(vfioVGpuMap[vf.profileName], vf.device)
+		iommuMap[vf.iommuGroup] = append(iommuMap[vf.iommuGroup], vf.device)
+		bdfToIommuMap[vf.device.addr] = vf.iommuGroup
+		installed[vf.device.addr] = vf.iommuGroup
+	}
+	vfioIommuBDFs = installed
+}
+
+// discoverVfioVGpusFunc scans the host for Nvidia vGPUs exposed through the
+// vendor-specific VFIO framework and returns them with their configured profile
+// name resolved. These vGPUs are SR-IOV VFs that stay bound to the "nvidia"
+// driver and expose their vGPU state under /sys/bus/pci/devices/<address>/
+// nvidia/, unlike mdev-backed vGPUs which are discovered under
+// /sys/bus/mdev/devices by createVgpuIDMap.
 //
 // A VF is considered a configured vGPU when current_vgpu_type is set to a
 // non-zero value. Its profile name is resolved by matching that type id
@@ -106,23 +198,13 @@ var isPhysicalFunction = isPhysicalFunctionFunc
 // card's mapping, since no invariant guarantees that two cards assign the
 // same numeric id to the same profile.
 //
-// Discovered VFs are added to the shared iommuMap and bdfToIommuMap used by
-// GenericDevicePlugin, so Allocate and the health check for these devices
+// It reads only sysfs (and NVML as a fallback) and does not mutate any shared
+// state, so it is safe to call repeatedly from the rediscovery loop. The
+// returned VFs are published into the shared iommuMap and bdfToIommuMap by
+// publishVfioVGpusLocked, so Allocate and the health check for these devices
 // reuse the exact same PCI/IOMMU-group contract as classic GPU passthrough -
 // no vendor-VFIO-specific Allocate logic is required.
-func createVfioVGpuMap() {
-	vfioVGpuMap = make(map[string][]NvidiaGpuDevice)
-	// iommuMap and bdfToIommuMap are shared with the GPU passthrough
-	// discovery (createIommuDeviceMap) and consumed by GenericDevicePlugin.
-	// Initialize them here too so this discovery also works standalone, e.g.
-	// in tests that call it directly.
-	if iommuMap == nil {
-		iommuMap = make(map[string][]NvidiaGpuDevice)
-	}
-	if bdfToIommuMap == nil {
-		bdfToIommuMap = make(map[string]string)
-	}
-
+func discoverVfioVGpusFunc() []resolvedVfioVF {
 	type vfioVGpuVF struct {
 		device     NvidiaGpuDevice
 		typeID     string
@@ -226,6 +308,7 @@ func createVfioVGpuMap() {
 		return names
 	}
 
+	resolved := make([]resolvedVfioVF, 0, len(vfs))
 	for _, vf := range vfs {
 		vGpuName, ok := vgpuTypeNamesByPF[vf.pfAddress][vf.typeID]
 		if !ok {
@@ -242,10 +325,13 @@ func createVfioVGpuMap() {
 				continue
 			}
 		}
-		vfioVGpuMap[vGpuName] = append(vfioVGpuMap[vGpuName], vf.device)
-		iommuMap[vf.iommuGroup] = append(iommuMap[vf.iommuGroup], vf.device)
-		bdfToIommuMap[vf.device.addr] = vf.iommuGroup
+		resolved = append(resolved, resolvedVfioVF{
+			profileName: vGpuName,
+			device:      vf.device,
+			iommuGroup:  vf.iommuGroup,
+		})
 	}
+	return resolved
 }
 
 // mergeCreatableVgpuTypes parses creatable_vgpu_types content and merges its
