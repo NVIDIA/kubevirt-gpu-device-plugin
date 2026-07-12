@@ -31,6 +31,7 @@ package device_plugin
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -119,6 +120,22 @@ func testPartitions() []fabric.Partition {
 	}
 }
 
+// testMultiPartitions is testPartitions plus a 2-GPU partition (id 20) covering
+// physicalIds {3,4} — the GPUs behind PFs 0000:41:00.0 and 0000:81:00.0. Its GPU
+// list is deliberately in [4,3] order so tests pin that activation orders the VFs
+// to match the partition's GPU order, not the request order.
+func testMultiPartitions() []fabric.Partition {
+	return []fabric.Partition{
+		{ID: 0, GPUs: []fabric.GPUInfo{
+			{PhysicalID: 1}, {PhysicalID: 2}, {PhysicalID: 3}, {PhysicalID: 4},
+			{PhysicalID: 5}, {PhysicalID: 6}, {PhysicalID: 7}, {PhysicalID: 8},
+		}},
+		{ID: 20, GPUs: []fabric.GPUInfo{{PhysicalID: 4}, {PhysicalID: 3}}},
+		{ID: 11, GPUs: []fabric.GPUInfo{{PhysicalID: 3}}},
+		{ID: 14, GPUs: []fabric.GPUInfo{{PhysicalID: 4}}},
+	}
+}
+
 // testPFForVF maps a VF to its PF: 0000:41:00.x -> 0000:41:00.0,
 // 0000:81:00.x -> 0000:81:00.0. Addresses starting with "nopf" have no PF.
 func testPFForVF(vf string) (string, error) {
@@ -157,7 +174,7 @@ func newTestActivator(fc *fakeFabricClient, connErr error, fm failMode) *fabricA
 		pfForVF:       testPFForVF,
 		moduleID:      testModuleID,
 		migMode:       func(string) (bool, error) { return false, nil },
-		podResources:  func() ([]allocatedDevice, error) { return nil, nil },
+		podResources:  func() ([][]allocatedDevice, error) { return nil, nil },
 		vfToPartition: map[string]uint32{},
 		activeVFs:     map[uint32]map[string]struct{}{},
 	}
@@ -198,11 +215,11 @@ func TestActivate_AlwaysSingleVF(t *testing.T) {
 	fc := &fakeFabricClient{partitions: testPartitions()}
 	a := newTestActivator(fc, nil, failClosed)
 	// Two VFs on the same physical GPU (partition 11) are allocated to running
-	// pods; both get adopted into the tracked set on reconcile.
-	a.podResources = func() ([]allocatedDevice, error) {
-		return []allocatedDevice{
-			{resourceName: "nvidia.com/H200X", deviceID: "0000:41:00.4"},
-			{resourceName: "nvidia.com/H200X", deviceID: "0000:41:00.5"},
+	// pods (one VF each); both get adopted into the tracked set on reconcile.
+	a.podResources = func() ([][]allocatedDevice, error) {
+		return [][]allocatedDevice{
+			{{resourceName: "nvidia.com/H200X", deviceID: "0000:41:00.4"}},
+			{{resourceName: "nvidia.com/H200X", deviceID: "0000:41:00.5"}},
 		}, nil
 	}
 
@@ -356,8 +373,8 @@ func TestActivate_PartitionNotFoundSkips(t *testing.T) {
 func TestActivate_AdoptedButInactivePartitionActivates(t *testing.T) {
 	fc := &fakeFabricClient{partitions: testPartitions()} // all partitions inactive
 	a := newTestActivator(fc, nil, failClosed)
-	a.podResources = func() ([]allocatedDevice, error) {
-		return []allocatedDevice{{resourceName: "nvidia.com/H200X", deviceID: "0000:41:00.4"}}, nil
+	a.podResources = func() ([][]allocatedDevice, error) {
+		return [][]allocatedDevice{{{resourceName: "nvidia.com/H200X", deviceID: "0000:41:00.4"}}}, nil
 	}
 
 	if err := a.Activate("0000:41:00.4"); err != nil {
@@ -383,8 +400,8 @@ func TestReconcile_PrunesAndDeactivatesEmptied(t *testing.T) {
 	}
 
 	// One VM departs: pod-resources reports only .4. Reconcile prunes .5, keeps 11.
-	a.podResources = func() ([]allocatedDevice, error) {
-		return []allocatedDevice{{resourceName: "nvidia.com/H200X", deviceID: "0000:41:00.4"}}, nil
+	a.podResources = func() ([][]allocatedDevice, error) {
+		return [][]allocatedDevice{{{resourceName: "nvidia.com/H200X", deviceID: "0000:41:00.4"}}}, nil
 	}
 	a.Reconcile()
 	if _, ok := a.activeVFs[11]["0000:41:00.5"]; ok {
@@ -395,7 +412,7 @@ func TestReconcile_PrunesAndDeactivatesEmptied(t *testing.T) {
 	}
 
 	// The last VF departs: reconcile deactivates the empty partition.
-	a.podResources = func() ([]allocatedDevice, error) { return nil, nil }
+	a.podResources = func() ([][]allocatedDevice, error) { return nil, nil }
 	a.Reconcile()
 	if _, ok := a.activeVFs[11]; ok {
 		t.Fatal("empty partition should be dropped from tracking")
@@ -495,5 +512,380 @@ func TestNewFabricActivator_FailModeDefaultClosed(t *testing.T) {
 	}
 	if a.failMode != failClosed {
 		t.Errorf("default fail mode must be closed, got %s", a.failMode)
+	}
+}
+
+// --- Multi-GPU (multi-VF) activation ---------------------------------------
+
+// TestActivateSet_SingleVFIdenticalToActivate: a one-element set must drive the
+// exact single-GPU path (partition 11, one VF), byte-identical to Activate.
+func TestActivateSet_SingleVFIdenticalToActivate(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, nil, failClosed)
+
+	if err := a.ActivateSet([]string{"0000:41:00.4"}); err != nil {
+		t.Fatalf("ActivateSet single: %v", err)
+	}
+	if len(fc.activateCalls) != 1 {
+		t.Fatalf("want 1 activate call, got %d", len(fc.activateCalls))
+	}
+	got := fc.activateCalls[0]
+	if got.partitionID != 11 || len(got.vfs) != 1 || got.vfs[0] != "0000:41:00.4" {
+		t.Fatalf("single-VF ActivateSet must match the single path, got %+v", got)
+	}
+}
+
+// TestActivateSet_MultiGPUMatchingSet: two whole cards forming a defined
+// partition activate that one partition, with one VF per GPU, ordered to the
+// partition's GPU order.
+func TestActivateSet_MultiGPUMatchingSet(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, nil, failClosed)
+
+	if err := a.ActivateSet([]string{"0000:41:00.4", "0000:81:00.4"}); err != nil {
+		t.Fatalf("ActivateSet: %v", err)
+	}
+	if len(fc.activateCalls) != 1 {
+		t.Fatalf("want 1 activate call (one multi-GPU partition), got %d: %v", len(fc.activateCalls), fc.activateCalls)
+	}
+	got := fc.activateCalls[0]
+	if got.partitionID != 20 {
+		t.Fatalf("want partition 20 (the {3,4} pair), got %d", got.partitionID)
+	}
+	// Partition 20's GPUs are [physId 4, physId 3]; the VF list must follow that
+	// order: [module-4 VF, module-3 VF] = [0000:81:00.4, 0000:41:00.4].
+	if len(got.vfs) != 2 || got.vfs[0] != "0000:81:00.4" || got.vfs[1] != "0000:41:00.4" {
+		t.Fatalf("VF order must match the partition's GPU order [phys4, phys3], got %v", got.vfs)
+	}
+	if len(fc.deactivateCalls) != 0 {
+		t.Fatalf("did not expect deactivate calls, got %v", fc.deactivateCalls)
+	}
+	if a.activeVFs[20] == nil || len(a.activeVFs[20]) != 2 {
+		t.Fatalf("both VFs must be tracked on partition 20, got %v", a.activeVFs[20])
+	}
+}
+
+// TestActivateSet_MultiGPUSteadyStateSkips: re-Allocate of the same multi-card
+// set with the partition already active must not touch Fabric Manager.
+func TestActivateSet_MultiGPUSteadyStateSkips(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, nil, failClosed)
+
+	req := []string{"0000:41:00.4", "0000:81:00.4"}
+	if err := a.ActivateSet(req); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ActivateSet(req); err != nil {
+		t.Fatal(err)
+	}
+	if len(fc.activateCalls) != 1 {
+		t.Fatalf("re-Allocate of a covered+active multi-GPU set must skip, got %d calls", len(fc.activateCalls))
+	}
+}
+
+// TestActivateSet_NoMatchingPartitionFailClosed: a multi-card set with no defined
+// partition fails the allocation under fail-closed, without touching FM.
+func TestActivateSet_NoMatchingPartitionFailClosed(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testPartitions()} // no {3,4} pair
+	a := newTestActivator(fc, nil, failClosed)
+
+	err := a.ActivateSet([]string{"0000:41:00.4", "0000:81:00.4"})
+	if err == nil {
+		t.Fatal("fail-closed must reject a multi-card set with no matching partition")
+	}
+	if len(fc.activateCalls) != 0 {
+		t.Fatalf("must not activate when no partition matches (fail-closed), got %v", fc.activateCalls)
+	}
+}
+
+// TestActivateSet_NoMatchingPartitionFailOpen: with no matching partition,
+// fail-open activates each card's single-GPU partition so CUDA still works.
+func TestActivateSet_NoMatchingPartitionFailOpen(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testPartitions()} // single-GPU 11 and 14, no pair
+	a := newTestActivator(fc, nil, failOpen)
+
+	if err := a.ActivateSet([]string{"0000:41:00.4", "0000:81:00.4"}); err != nil {
+		t.Fatalf("fail-open must allow the allocation via per-GPU fallback, got %v", err)
+	}
+	if len(fc.activateCalls) != 2 {
+		t.Fatalf("want 2 single-GPU activations in per-GPU fallback, got %d: %v", len(fc.activateCalls), fc.activateCalls)
+	}
+	gotParts := map[uint32]bool{}
+	for _, c := range fc.activateCalls {
+		if len(c.vfs) != 1 {
+			t.Fatalf("per-GPU fallback must activate one VF per call, got %v", c.vfs)
+		}
+		gotParts[c.partitionID] = true
+	}
+	if !gotParts[11] || !gotParts[14] {
+		t.Fatalf("want single-GPU partitions 11 and 14 activated, got %v", gotParts)
+	}
+}
+
+// TestActivateSet_MIGCardExcludedCollapsesToSingle: a MIG card mixed into the
+// request is skipped; if only one whole card remains, it is a single-GPU
+// activation.
+func TestActivateSet_MIGCardExcludedCollapsesToSingle(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, nil, failClosed)
+	a.migMode = func(pf string) (bool, error) { return pf == "0000:81:00.0", nil } // module-4 card is MIG
+
+	if err := a.ActivateSet([]string{"0000:41:00.4", "0000:81:00.4"}); err != nil {
+		t.Fatalf("ActivateSet: %v", err)
+	}
+	if len(fc.activateCalls) != 1 {
+		t.Fatalf("want 1 activate (single whole card after MIG excluded), got %d: %v", len(fc.activateCalls), fc.activateCalls)
+	}
+	got := fc.activateCalls[0]
+	if got.partitionID != 11 || len(got.vfs) != 1 || got.vfs[0] != "0000:41:00.4" {
+		t.Fatalf("want single-GPU partition 11 for the one whole card, got %+v", got)
+	}
+}
+
+// TestActivateSet_AllMIGIsNoOp: a multi-card set that is entirely MIG activates
+// nothing.
+func TestActivateSet_AllMIGIsNoOp(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, nil, failClosed)
+	a.migMode = func(string) (bool, error) { return true, nil }
+
+	if err := a.ActivateSet([]string{"0000:41:00.4", "0000:81:00.4"}); err != nil {
+		t.Fatalf("all-MIG set must be a no-op, got %v", err)
+	}
+	if len(fc.activateCalls) != 0 {
+		t.Fatalf("all-MIG set must not touch Fabric Manager, got %v", fc.activateCalls)
+	}
+}
+
+// TestReconcile_MultiGPUDeactivatesAfterVMDeparts: a multi-GPU partition stays
+// active while its VM runs (its container reports the full VF set) and is
+// deactivated exactly once, when the VM departs.
+func TestReconcile_MultiGPUDeactivatesAfterVMDeparts(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, nil, failClosed)
+
+	if err := a.ActivateSet([]string{"0000:41:00.4", "0000:81:00.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.activeVFs[20]) != 2 {
+		t.Fatalf("partition 20 should track both VFs, got %v", a.activeVFs[20])
+	}
+
+	// VM still running: its virt-launcher container reports both cards (kubelet
+	// lists a container's devices atomically). Partition 20 must stay active.
+	a.podResources = func() ([][]allocatedDevice, error) {
+		return [][]allocatedDevice{{
+			{resourceName: "nvidia.com/H200X", deviceID: "0000:41:00.4"},
+			{resourceName: "nvidia.com/H200X", deviceID: "0000:81:00.4"},
+		}}, nil
+	}
+	a.Reconcile()
+	if len(a.activeVFs[20]) != 2 {
+		t.Fatalf("multi-GPU partition must stay active while its VM runs, got %v", a.activeVFs[20])
+	}
+	if len(fc.deactivateCalls) != 0 {
+		t.Fatalf("must not deactivate a running VM's partition, got %v", fc.deactivateCalls)
+	}
+
+	// The VM departs: its container is gone. Reconcile deactivates partition 20
+	// exactly once (all its VFs released).
+	a.podResources = func() ([][]allocatedDevice, error) { return nil, nil }
+	a.Reconcile()
+	if _, ok := a.activeVFs[20]; ok {
+		t.Fatal("multi-GPU partition should be dropped once its VM departs")
+	}
+	if len(fc.deactivateCalls) != 1 || fc.deactivateCalls[0] != 20 {
+		t.Fatalf("want a single Deactivate(20) after the VM departs, got %v", fc.deactivateCalls)
+	}
+}
+
+// TestReconcile_AdoptsMultiGPUPartitionAfterRestart: with in-memory state empty
+// (as after a device-plugin restart), reconcile reconstructs a multi-GPU
+// partition from the VM's container device set, so it can later be deactivated.
+func TestReconcile_AdoptsMultiGPUPartitionAfterRestart(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions(), active: map[uint32]bool{20: true}}
+	a := newTestActivator(fc, nil, failClosed)
+	a.podResources = func() ([][]allocatedDevice, error) {
+		return [][]allocatedDevice{{
+			{resourceName: "nvidia.com/H200X", deviceID: "0000:41:00.4"},
+			{resourceName: "nvidia.com/H200X", deviceID: "0000:81:00.4"},
+		}}, nil
+	}
+
+	a.Reconcile()
+	if len(a.activeVFs[20]) != 2 {
+		t.Fatalf("reconcile must adopt the running VM's cards onto multi-GPU partition 20, got %v", a.activeVFs[20])
+	}
+	if len(fc.deactivateCalls) != 0 {
+		t.Fatalf("a running VM must not be deactivated, got %v", fc.deactivateCalls)
+	}
+}
+
+// TestActivateSet_MultiFailClosedConnectErrorFails: a multi-card request must
+// fail the allocation under fail-closed when Fabric Manager is unreachable.
+func TestActivateSet_MultiFailClosedConnectErrorFails(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, errors.New("no daemon"), failClosed)
+	if err := a.ActivateSet([]string{"0000:41:00.4", "0000:81:00.4"}); err == nil {
+		t.Fatal("fail-closed must fail a multi-card allocation when FM is unreachable")
+	}
+	if len(fc.activateCalls) != 0 {
+		t.Fatalf("must not activate anything on a connect failure, got %v", fc.activateCalls)
+	}
+}
+
+// TestActivateSet_MultiFailOpenConnectErrorAllows: fail-open allows a multi-card
+// allocation when FM is unreachable, activating nothing.
+func TestActivateSet_MultiFailOpenConnectErrorAllows(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, errors.New("no daemon"), failOpen)
+	if err := a.ActivateSet([]string{"0000:41:00.4", "0000:81:00.4"}); err != nil {
+		t.Fatalf("fail-open must allow a multi-card allocation on connect failure, got %v", err)
+	}
+	if len(fc.activateCalls) != 0 {
+		t.Fatalf("must not activate anything on a connect failure, got %v", fc.activateCalls)
+	}
+}
+
+// TestActivateSet_TwoVFsSameGPUFallsBack: two VFs resolving to the same physical
+// GPU cannot form a one-VF-per-GPU partition, so under fail-closed the allocation
+// fails (routed through the no-match fallback) rather than activating a partition
+// with a duplicate GPU.
+func TestActivateSet_TwoVFsSameGPUFallsBack(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, nil, failClosed)
+	// 0000:41:00.4 and 0000:41:00.5 both live on PF 0000:41:00.0 -> module id 3.
+	if err := a.ActivateSet([]string{"0000:41:00.4", "0000:41:00.5"}); err == nil {
+		t.Fatal("two VFs on the same GPU must not form a multi-GPU partition under fail-closed")
+	}
+	if len(fc.activateCalls) != 0 {
+		t.Fatalf("must not activate a partition with a duplicate GPU, got %v", fc.activateCalls)
+	}
+}
+
+// TestActivateSet_MultiModuleIDErrorFails: a module-id resolution failure for a
+// whole card in a multi-card request is a hard error, mirroring the single path.
+func TestActivateSet_MultiModuleIDErrorFails(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, nil, failClosed)
+	a.moduleID = func(pf string) (uint32, error) {
+		if pf == "0000:81:00.0" {
+			return 0, errors.New("nvml module id failure")
+		}
+		return testModuleID(pf)
+	}
+	if err := a.ActivateSet([]string{"0000:41:00.4", "0000:81:00.4"}); err == nil {
+		t.Fatal("a module-id resolution failure for a whole card must fail the allocation")
+	}
+	if len(fc.activateCalls) != 0 {
+		t.Fatalf("must not activate when a member's GPU cannot be resolved, got %v", fc.activateCalls)
+	}
+}
+
+// --- GetPreferredAllocation partition alignment ----------------------------
+
+func TestPreferredVFSet_PartitionAligned(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, nil, failClosed)
+
+	set, ok := a.PreferredVFSet([]string{"0000:41:00.4", "0000:81:00.4"}, nil, 2)
+	if !ok {
+		t.Fatal("expected a partition-aligned preferred set")
+	}
+	if len(set) != 2 {
+		t.Fatalf("want 2 VFs, got %v", set)
+	}
+	want := map[string]bool{"0000:41:00.4": true, "0000:81:00.4": true}
+	for _, vf := range set {
+		if !want[vf] {
+			t.Fatalf("unexpected VF %s in preferred set %v", vf, set)
+		}
+	}
+}
+
+func TestPreferredVFSet_SingleDeviceDefers(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, nil, failClosed)
+	if _, ok := a.PreferredVFSet([]string{"0000:41:00.4"}, nil, 1); ok {
+		t.Fatal("single-device request must defer to the default preference")
+	}
+}
+
+func TestPreferredVFSet_NoAlignedSetDefers(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testPartitions()} // only single-GPU + all-8
+	a := newTestActivator(fc, nil, failClosed)
+	if _, ok := a.PreferredVFSet([]string{"0000:41:00.4", "0000:81:00.4"}, nil, 2); ok {
+		t.Fatal("no matching 2-GPU partition must defer to the default preference")
+	}
+}
+
+func TestPreferredVFSet_UnsupportedDefers(t *testing.T) {
+	fc := &fakeFabricClient{getErr: &fabric.Error{Op: "fmGetSupportedFabricPartitions", Code: fabric.ErrNotSupported}}
+	a := newTestActivator(fc, nil, failClosed)
+	if _, ok := a.PreferredVFSet([]string{"0000:41:00.4", "0000:81:00.4"}, nil, 2); ok {
+		t.Fatal("an unsupported system must defer to the default preference")
+	}
+}
+
+func TestPreferredVFSet_MustIncludeHonored(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, nil, failClosed)
+
+	set, ok := a.PreferredVFSet([]string{"0000:41:00.4", "0000:81:00.4"}, []string{"0000:81:00.4"}, 2)
+	if !ok {
+		t.Fatal("expected an aligned set covering the must-include device")
+	}
+	found := false
+	for _, vf := range set {
+		if vf == "0000:81:00.4" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("must-include VF absent from preferred set %v", set)
+	}
+}
+
+func TestPreferredVFSet_MustIncludeUnresolvableDefers(t *testing.T) {
+	fc := &fakeFabricClient{partitions: testMultiPartitions()}
+	a := newTestActivator(fc, nil, failClosed)
+	// A must-include device with no parent PF cannot be guaranteed in any
+	// partition-aligned set, so the preference defers to the default.
+	if _, ok := a.PreferredVFSet([]string{"0000:41:00.4", "0000:81:00.4"}, []string{"nopf-device"}, 2); ok {
+		t.Fatal("an unresolvable must-include device must defer to the default preference")
+	}
+}
+
+// TestPreferredVFSet_PrefersLessFragmenting: among candidate size-2 partitions,
+// prefer the one that does not break up a larger still-available partition.
+func TestPreferredVFSet_PrefersLessFragmenting(t *testing.T) {
+	parts := []fabric.Partition{
+		{ID: 30, GPUs: []fabric.GPUInfo{{PhysicalID: 1}, {PhysicalID: 2}}},
+		{ID: 31, GPUs: []fabric.GPUInfo{{PhysicalID: 3}, {PhysicalID: 4}}},
+		{ID: 40, GPUs: []fabric.GPUInfo{{PhysicalID: 1}, {PhysicalID: 2}, {PhysicalID: 5}, {PhysicalID: 6}}},
+	}
+	fc := &fakeFabricClient{partitions: parts}
+	a := newTestActivator(fc, nil, failClosed)
+	// VF "vfN" -> PF "pfN" -> module N.
+	a.pfForVF = func(vf string) (string, error) { return "pf" + strings.TrimPrefix(vf, "vf"), nil }
+	a.moduleID = func(pf string) (uint32, error) {
+		n, err := strconv.Atoi(strings.TrimPrefix(pf, "pf"))
+		if err != nil {
+			return 0, err
+		}
+		return uint32(n), nil
+	}
+
+	// P30={1,2} fragments the available 4-GPU P40; P31={3,4} does not.
+	set, ok := a.PreferredVFSet([]string{"vf1", "vf2", "vf3", "vf4", "vf5", "vf6"}, nil, 2)
+	if !ok {
+		t.Fatal("expected a partition-aligned set")
+	}
+	got := map[string]bool{}
+	for _, vf := range set {
+		got[vf] = true
+	}
+	if len(set) != 2 || !got["vf3"] || !got["vf4"] {
+		t.Fatalf("expected the less-fragmenting pair {vf3,vf4} (partition 31), got %v", set)
 	}
 }

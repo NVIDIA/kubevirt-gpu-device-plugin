@@ -50,11 +50,17 @@ type allocatedDevice struct {
 	deviceID     string
 }
 
-// listAllocatedDevicesViaPodResources returns every device currently allocated
-// to a running pod, as reported by the kubelet pod-resources API. Only devices
-// under the DeviceNamespace (nvidia.com/*) are relevant to fabric activation;
-// callers filter as needed.
-func listAllocatedDevicesViaPodResources() ([]allocatedDevice, error) {
+// listAllocatedDeviceSetsViaPodResources returns the devices currently allocated
+// to running pods, grouped per container, as reported by the kubelet
+// pod-resources API. Each inner slice is one container's device set — for a
+// KubeVirt VM that is the virt-launcher container, so the set is exactly the
+// GPUs (VF PCI BDFs) of one VM. The grouping is what lets the fabric reconciler
+// reconstruct a multi-GPU partition (a VM allocated N whole cards) after a
+// device-plugin restart, since kubelet does not re-call Allocate for
+// already-running pods and Fabric Manager does not report a partition's VF list.
+// Only devices under the DeviceNamespace (nvidia.com/*) are relevant to fabric
+// activation; callers filter as needed.
+func listAllocatedDeviceSetsViaPodResources() ([][]allocatedDevice, error) {
 	conn, err := connect(podResourcesSocket, connectionTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("dialing pod-resources socket %s: %w", podResourcesSocket, err)
@@ -70,20 +76,24 @@ func listAllocatedDevicesViaPodResources() ([]allocatedDevice, error) {
 		return nil, fmt.Errorf("listing pod resources: %w", err)
 	}
 
-	var devices []allocatedDevice
+	var sets [][]allocatedDevice
 	for _, pod := range resp.GetPodResources() {
 		for _, container := range pod.GetContainers() {
+			var set []allocatedDevice
 			for _, dev := range container.GetDevices() {
 				for _, id := range dev.GetDeviceIds() {
-					devices = append(devices, allocatedDevice{
+					set = append(set, allocatedDevice{
 						resourceName: dev.GetResourceName(),
 						deviceID:     id,
 					})
 				}
 			}
+			if len(set) > 0 {
+				sets = append(sets, set)
+			}
 		}
 	}
-	return devices, nil
+	return sets, nil
 }
 
 // nvidiaResourcePrefix is the resource-name prefix of devices this plugin

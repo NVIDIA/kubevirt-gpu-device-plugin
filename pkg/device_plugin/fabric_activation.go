@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -52,8 +53,11 @@ import (
 //
 // Model (validated on hardware):
 //   - Fabric Manager's fmActivateFabricPartitionWithVFs takes ONE VF per GPU in
-//     the partition. A vGPU VF's partition is the single-GPU partition of its
-//     physical GPU, so activation always passes exactly one VF (numVfs=1).
+//     the partition. A single whole card resolves to the single-GPU partition of
+//     its physical GPU and is activated with exactly one VF (numVfs=1); several
+//     whole cards allocated in one container request resolve to the single
+//     multi-GPU partition spanning them and are activated with one VF per member
+//     GPU (numVfs=N), in the partition's GPU order.
 //   - MIG-mode GPUs have NVLink disabled and are not in the fabric, so their VFs
 //     need no activation and are skipped. Only whole-card (MIG-disabled) VFs are
 //     activated. This assumes at most one whole-card vGPU per physical GPU (true
@@ -104,15 +108,27 @@ func (m failMode) String() string {
 	return "closed"
 }
 
-// activateFabricForVF is called from Allocate. It defaults to a no-op so the
-// plugin (and the existing Allocate tests) behave unchanged until fabric
-// activation is enabled by initFabricActivation.
-var activateFabricForVF = func(vfBDF string) error { return nil }
+// activateFabricForVFs is called once per container request from Allocate with
+// the whole set of VF BDFs in that request. It defaults to a no-op so the plugin
+// (and the existing Allocate tests) behave unchanged until fabric activation is
+// enabled by initFabricActivation. A single-VF request keeps the exact single-GPU
+// activation behavior; a multi-VF request activates one multi-GPU partition
+// spanning all of the request's whole cards (NVLink peer-to-peer between them).
+var activateFabricForVFs = func(vfBDFs []string) error { return nil }
+
+// preferredFabricVFSet is consulted by GetPreferredAllocation. Given the VF BDFs
+// kubelet offers, the size it wants, and any it must include, it returns a subset
+// whose GPUs form a defined fabric partition (so the resulting VM gets NVLink
+// P2P), or (nil, false) to let the caller fall back to its default preference.
+// It defaults to declining so preferred allocation is unchanged until fabric
+// activation is enabled.
+var preferredFabricVFSet = func(available, mustInclude []string, size int) ([]string, bool) { return nil, false }
 
 // fabricActivator activates whole-card vGPU fabric partitions and tracks, per
 // partition, the VFs currently allocated to running pods so it can deactivate a
-// partition once its VF is gone. Activation itself always uses a single VF; the
-// tracked set exists only for the skip-if-active check and deactivate-on-empty.
+// partition once all of its VFs are gone. A single-GPU partition is activated
+// with one VF; a multi-GPU partition spanning N whole cards is activated with
+// one VF per member GPU, in the partition's GPU order.
 type fabricActivator struct {
 	mu sync.Mutex
 
@@ -126,11 +142,13 @@ type fabricActivator struct {
 	pfForVF      fabric.PFForVFFunc
 	moduleID     fabric.ModuleIDFunc
 	migMode      fabric.MigModeFunc
-	podResources func() ([]allocatedDevice, error)
+	podResources func() ([][]allocatedDevice, error)
 
 	client fabric.Client // lazily connected
 
-	vfToPartition map[string]uint32              // VF BDF -> partition id (cached; topology is static)
+	vfToPartition map[string]uint32              // VF BDF -> single-GPU partition id (cached; topology is static)
+	pfToModule    map[string]uint32              // PF BDF -> FM physicalId (cached; used by the multi-GPU + preference paths)
+	topology      []fabric.Partition             // cached partition topology (GPU membership is static; for the preference path)
 	activeVFs     map[uint32]map[string]struct{} // partition id -> VFs allocated on it (for deactivate-on-empty)
 	reconciled    bool                           // pod-resources reconcile has succeeded at least once
 	unsupported   bool                           // FM definitively reports no fabric partitions
@@ -182,9 +200,10 @@ func newFabricActivator() (*fabricActivator, bool) {
 		pfForVF:           func(vfBDF string) (string, error) { return readLink(basePath, vfBDF, physfnLink) },
 		moduleID:          fabric.ModuleIDViaNVML(nvmllib),
 		migMode:           fabric.MigEnabledViaNVML(nvmllib),
-		podResources:      listAllocatedDevicesViaPodResources,
+		podResources:      listAllocatedDeviceSetsViaPodResources,
 
 		vfToPartition: map[string]uint32{},
+		pfToModule:    map[string]uint32{},
 		activeVFs:     map[uint32]map[string]struct{}{},
 	}, true
 }
@@ -197,7 +216,8 @@ func initFabricActivation() {
 		log.Printf("fabric: partition activation disabled (%s=off)", envFabricActivation)
 		return
 	}
-	activateFabricForVF = a.Activate
+	activateFabricForVFs = a.ActivateSet
+	preferredFabricVFSet = a.PreferredVFSet
 	log.Printf("fabric: partition activation enabled (address=%s, reconcile=%s, failMode=%s)",
 		a.address, a.reconcileInterval, a.failMode)
 
@@ -227,7 +247,14 @@ func (a *fabricActivator) ensureClient() (fabric.Client, error) {
 func (a *fabricActivator) Activate(vfBDF string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.activateOneLocked(vfBDF)
+}
 
+// activateOneLocked is the single-VF activation body: it resolves the VF's
+// single-GPU fabric partition and activates it with exactly that one VF
+// (numVfs=1). The caller must hold a.mu. This path is unchanged from the
+// single-VF design and is what a one-device Allocate request drives.
+func (a *fabricActivator) activateOneLocked(vfBDF string) error {
 	if a.unsupported {
 		return nil
 	}
@@ -317,6 +344,258 @@ func (a *fabricActivator) Activate(vfBDF string) error {
 	return nil
 }
 
+// resolvedVF is a whole-card VF paired with its parent PF and FM physicalId
+// (NVML module id). Used by the multi-GPU activation and reconcile paths.
+type resolvedVF struct {
+	vf       string
+	pf       string
+	moduleID uint32
+}
+
+// ActivateSet activates the fabric partition(s) for one container request's whole
+// set of VF BDFs. It is the seam Allocate calls once per request. A one-VF
+// request is byte-identical to Activate (the single-GPU path). A request whose
+// whole cards number N>1 is activated as a single multi-GPU partition spanning
+// exactly those cards, so the guest gets NVLink peer-to-peer between them.
+func (a *fabricActivator) ActivateSet(vfBDFs []string) error {
+	switch len(vfBDFs) {
+	case 0:
+		return nil
+	case 1:
+		// Preserve the exact single-VF path, including its logging and its
+		// unsupported / non-SR-IOV / MIG / partition-not-found skips.
+		return a.Activate(vfBDFs[0])
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.activateMultiLocked(vfBDFs)
+}
+
+// activateMultiLocked handles an Allocate request carrying more than one VF. It
+// filters the request to its whole-card VFs (skipping non-SR-IOV devices and
+// MIG-mode GPUs, exactly like the single path), then:
+//   - 0 whole cards: nothing to do.
+//   - 1 whole card: defer to the single-GPU path.
+//   - N>1 whole cards forming a defined partition: activate that one partition
+//     with one VF per member GPU (NVLink P2P between the cards).
+//   - N>1 whole cards with no matching partition: fall back per FABRIC_FAIL_MODE.
+//
+// The caller must hold a.mu.
+func (a *fabricActivator) activateMultiLocked(vfBDFs []string) error {
+	if a.unsupported {
+		return nil
+	}
+
+	// Filter to whole-card VFs first (physfn + MIG checks only, no Fabric Manager
+	// contact), so a request that is entirely MIG / passthrough is decided without
+	// connecting to FM — matching the single-VF path, which skips those before it
+	// ever connects. This keeps such requests a no-op even when FM is down.
+	whole := a.filterWholeCardVFs(vfBDFs)
+	switch len(whole) {
+	case 0:
+		// All request devices were MIG / passthrough: nothing to activate.
+		return nil
+	case 1:
+		// After filtering, only one whole card remains: single-GPU activation.
+		return a.activateOneLocked(whole[0].vf)
+	}
+
+	client, err := a.ensureClient()
+	if err != nil {
+		return a.onFMErrorSet(vfBDFs, "connecting to Fabric Manager", err)
+	}
+
+	partitions, err := client.GetSupportedPartitions()
+	if err != nil {
+		if errors.Is(err, fabric.ErrFabricNotSupported) {
+			a.unsupported = true
+			log.Printf("fabric: Fabric Manager reports no fabric partitions (not NVSwitch / not FABRIC_MODE=2); disabling activation")
+			return nil
+		}
+		return a.onFMErrorSet(vfBDFs, "listing fabric partitions", err)
+	}
+
+	if !a.reconciled {
+		if rerr := a.reconcile(client, partitions); rerr == nil {
+			a.reconciled = true
+		} else {
+			log.Printf("fabric: pod-resources reconcile not yet available (%v); proceeding", rerr)
+		}
+	}
+
+	// Resolve each whole card's FM physicalId (NVML). A resolution failure is a
+	// hard error, as in the single-VF path.
+	moduleIDs := make([]uint32, len(whole))
+	for i := range whole {
+		modID, err := a.moduleIDCached(whole[i].pf)
+		if err != nil {
+			return fmt.Errorf("fabric: resolving module id of PF %s (VF %s): %w", whole[i].pf, whole[i].vf, err)
+		}
+		whole[i].moduleID = modID
+		moduleIDs[i] = modID
+	}
+
+	partition, err := fabric.PartitionForModuleIDs(moduleIDs, partitions)
+	if err != nil || len(partition.GPUs) != len(whole) {
+		// No defined partition spans exactly this set (or two VFs share one GPU,
+		// so it cannot be one-VF-per-GPU): fall back per fail mode.
+		return a.fallbackNoMatchLocked(whole, moduleIDs, partitions, err)
+	}
+
+	// Order the VFs so vfList[i] corresponds to partition.GPUs[i], as
+	// fmActivateFabricPartitionWithVFs requires (one VF per physical GPU, in the
+	// partition's GPU order).
+	byModule := make(map[uint32]string, len(whole))
+	for _, r := range whole {
+		byModule[r.moduleID] = r.vf
+	}
+	orderedVFs := make([]fabric.BDF, 0, len(partition.GPUs))
+	for _, g := range partition.GPUs {
+		vfBDF, ok := byModule[g.PhysicalID]
+		if !ok {
+			// Should not happen: PartitionForModuleIDs matched the set exactly.
+			return a.fallbackNoMatchLocked(whole, moduleIDs, partitions,
+				fmt.Errorf("fabric: partition %d GPU physicalId %d has no VF in the request", partition.ID, g.PhysicalID))
+		}
+		b, perr := fabric.ParseBDF(vfBDF)
+		if perr != nil {
+			return fmt.Errorf("fabric: parsing VF address %q: %w", vfBDF, perr)
+		}
+		orderedVFs = append(orderedVFs, b)
+	}
+
+	// Track every member VF on the partition; deactivation waits for the last.
+	set := a.activeVFs[partition.ID]
+	if set == nil {
+		set = map[string]struct{}{}
+		a.activeVFs[partition.ID] = set
+	}
+	allCovered := true
+	for _, r := range whole {
+		if _, ok := set[r.vf]; !ok {
+			allCovered = false
+			break
+		}
+	}
+	if allCovered && a.partitionActive(partitions, partition.ID) {
+		log.Printf("fabric: partition %d already active and covers all %d VFs; skipping activation (steady state)", partition.ID, len(whole))
+		return nil
+	}
+	for _, r := range whole {
+		set[r.vf] = struct{}{}
+	}
+
+	vfStrs := make([]string, len(orderedVFs))
+	for i, b := range orderedVFs {
+		vfStrs[i] = b.String()
+	}
+	log.Printf("fabric: activating multi-GPU partition %d for %d whole-card VFs %v (one VF per GPU, numVfs=%d)",
+		partition.ID, len(whole), vfStrs, len(orderedVFs))
+	if err := a.ensurePartitionActive(client, partition.ID, orderedVFs, !allCovered); err != nil {
+		return a.onFMErrorSet(vfBDFs, fmt.Sprintf("activating multi-GPU partition %d", partition.ID), err)
+	}
+	log.Printf("fabric: multi-GPU partition %d active for %d VFs", partition.ID, len(orderedVFs))
+	return nil
+}
+
+// filterWholeCardVFs filters a request's VF BDFs to its whole-card VFs using
+// physfn + MIG checks only — no Fabric Manager or module-id resolution — so a
+// request that is entirely MIG / passthrough is decided without connecting to
+// FM. Non-SR-IOV devices (no physfn) and MIG-mode GPUs (NVLink off, not on the
+// fabric) are skipped, exactly as the single path skips them; a MIG-check error
+// is treated as "proceed" (include the VF) rather than risk dropping a whole
+// card. moduleID is left unset; the caller resolves it once the set is known to
+// hold more than one whole card.
+func (a *fabricActivator) filterWholeCardVFs(vfBDFs []string) []resolvedVF {
+	var whole []resolvedVF
+	for _, vf := range vfBDFs {
+		pf, err := a.pfForVF(vf)
+		if err != nil {
+			log.Printf("fabric: %s has no parent PF (not an SR-IOV VF); excluding from multi-GPU activation", vf)
+			continue
+		}
+		if mig, err := a.migMode(pf); err != nil {
+			log.Printf("fabric: could not determine MIG mode of PF %s (%v); including VF %s in multi-GPU activation", pf, err, vf)
+		} else if mig {
+			log.Printf("fabric: skipping MIG-mode GPU (PF %s) for VF %s; MIG has NVLink off, no fabric partition needed", pf, vf)
+			continue
+		}
+		whole = append(whole, resolvedVF{vf: vf, pf: pf})
+	}
+	return whole
+}
+
+// fallbackNoMatchLocked handles a multi-VF request whose whole cards do not form
+// a single defined fabric partition. Fail-closed fails the allocation, naming the
+// requested GPU set and the multi-GPU partitions the fabric does offer. Fail-open
+// activates each card's own single-GPU partition, so CUDA works in the guest
+// without cross-card NVLink peer-to-peer. Caller must hold a.mu.
+func (a *fabricActivator) fallbackNoMatchLocked(whole []resolvedVF, moduleIDs []uint32, partitions []fabric.Partition, cause error) error {
+	vfs := make([]string, len(whole))
+	for i, r := range whole {
+		vfs[i] = r.vf
+	}
+	if a.failMode == failClosed {
+		return fmt.Errorf("fabric: no defined fabric partition spans exactly the %d requested whole-card GPUs "+
+			"(physicalIds %v, VFs %v); the NVSwitch layout offers %s; refusing to hand out cards without a matching "+
+			"NVLink partition (set FABRIC_FAIL_MODE=open to allocate them as isolated single-GPU partitions instead): %w",
+			len(whole), moduleIDs, vfs, describeMultiGPUPartitions(partitions), cause)
+	}
+	log.Printf("fabric: WARNING: no partition spans exactly the requested cards (physicalIds %v, VFs %v); "+
+		"fail-open: activating each card's single-GPU partition (CUDA works, no cross-card NVLink P2P)", moduleIDs, vfs)
+	for _, r := range whole {
+		if err := a.activateOneLocked(r.vf); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// describeMultiGPUPartitions renders the multi-GPU partitions the fabric offers,
+// each as "P<id>={physicalIds}", for the fail-closed error message. Single-GPU
+// partitions are omitted (a multi-VF request needs a multi-GPU partition).
+func describeMultiGPUPartitions(partitions []fabric.Partition) string {
+	var parts []string
+	for _, p := range partitions {
+		if len(p.GPUs) < 2 {
+			continue
+		}
+		ids := make([]uint32, len(p.GPUs))
+		for i, g := range p.GPUs {
+			ids[i] = g.PhysicalID
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		strs := make([]string, len(ids))
+		for i, id := range ids {
+			strs[i] = fmt.Sprintf("%d", id)
+		}
+		parts = append(parts, fmt.Sprintf("P%d={%s}", p.ID, strings.Join(strs, ",")))
+	}
+	if len(parts) == 0 {
+		return "(none)"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// moduleIDCached resolves a PF's FM physicalId (NVML module id), caching the
+// result since the PF -> physicalId mapping is static for the machine's
+// lifetime. Used by the multi-GPU and preferred-allocation paths; the single
+// path caches at the partition level via vfToPartition.
+func (a *fabricActivator) moduleIDCached(pf string) (uint32, error) {
+	if a.pfToModule == nil {
+		a.pfToModule = map[string]uint32{}
+	}
+	if id, ok := a.pfToModule[pf]; ok {
+		return id, nil
+	}
+	id, err := a.moduleID(pf)
+	if err != nil {
+		return 0, err
+	}
+	a.pfToModule[pf] = id
+	return id, nil
+}
+
 // onFMError applies the configured failMode to a Fabric Manager error: fail-closed
 // returns a wrapped error (fails the allocation); fail-open logs a warning and
 // returns nil (allows the allocation, guest may be CUDA 802 until the fabric is
@@ -327,6 +606,17 @@ func (a *fabricActivator) onFMError(vfBDF, op string, err error) error {
 	}
 	log.Printf("fabric: WARNING: %s for VF %s: %v; allowing the allocation "+
 		"(fail-open; guest may fail CUDA with error 802 until the fabric partition is up)", op, vfBDF, err)
+	return nil
+}
+
+// onFMErrorSet is onFMError for the multi-VF path: fail-closed returns the error
+// (fails the allocation for the whole request); fail-open logs and allows it.
+func (a *fabricActivator) onFMErrorSet(vfBDFs []string, op string, err error) error {
+	if a.failMode == failClosed {
+		return fmt.Errorf("fabric: %s for VF set %v: %w", op, vfBDFs, err)
+	}
+	log.Printf("fabric: WARNING: %s for VF set %v: %v; allowing the allocation "+
+		"(fail-open; guest may fail CUDA with error 802 until the fabric partition is up)", op, vfBDFs, err)
 	return nil
 }
 
@@ -360,10 +650,11 @@ func (a *fabricActivator) partitionActive(partitions []fabric.Partition, partiti
 	return false
 }
 
-// ensurePartitionActive activates partitionID for vfSet (a single VF).
-// It is idempotent: if the partition is already active for a DIFFERENT VF (e.g.
-// the whole-card VM restarted with a new VF) and this is a new VF, it
-// deactivates and reactivates with the new VF.
+// ensurePartitionActive activates partitionID for vfSet — one VF per member GPU
+// (a single VF for a single-GPU partition, N ordered VFs for a multi-GPU one).
+// It is idempotent: if the partition is already active for a DIFFERENT VF set
+// (e.g. the whole-card VM restarted with new VFs) and this is a new activation,
+// it deactivates and reactivates with the supplied VF set.
 func (a *fabricActivator) ensurePartitionActive(client fabric.Client, partitionID uint32, vfSet []fabric.BDF, isNewVF bool) error {
 	err := client.ActivateWithVFs(partitionID, vfSet)
 	if err == nil {
@@ -427,20 +718,82 @@ func (a *fabricActivator) Reconcile() {
 	}
 }
 
-// reconcile updates the tracked per-partition VF set from the VFs the kubelet
-// pod-resources API reports as allocated to running pods, and deactivates any
-// partition left with no VFs (its VM departed). MIG VFs and VFs without a
-// single-GPU partition are ignored (they are never activated). Must be called
-// with the lock held.
+// reconcile updates the tracked per-partition VF set from the whole-card VFs the
+// kubelet pod-resources API reports as allocated to running pods, and deactivates
+// any partition whose VFs have all departed. Devices are grouped per container
+// (one VM), so a multi-GPU partition — a VM allocated N whole cards — is
+// reconstructed as a single partition owning N VFs. That grouping matters after a
+// device-plugin restart: kubelet does not re-Allocate running pods, and Fabric
+// Manager does not report an active partition's VF list, so the pod-resources
+// view is the only way to rebuild membership. MIG VFs and VFs without a fabric
+// partition are ignored (they are never activated). Must be called with a.mu held.
+//
+// Deactivation semantics: kubelet lists each container's devices atomically and
+// completely, so a running multi-GPU VM always reports its full VF set. The
+// reconciler recomputes the desired partition membership from the current
+// pod-resources snapshot each pass and deactivates a partition once no running
+// container maps a VF onto it — i.e. its VM departed and all of its VFs are
+// released. There is no sub-container partial-release state to handle: a
+// partition's tracked set is only emptied when the whole VM is gone.
 func (a *fabricActivator) reconcile(client fabric.Client, partitions []fabric.Partition) error {
-	devices, err := a.podResources()
+	sets, err := a.podResources()
 	if err != nil {
 		return err
 	}
 
-	// Desired per-partition VF set from currently running pods (whole-card VFs
-	// only; MIG VFs are not activated so are irrelevant to deactivation).
+	// desired: partition id -> its member VFs, reconstructed per VM, mirroring the
+	// activation decision (one multi-GPU partition, or per-GPU single partitions).
 	desired := map[uint32]map[string]struct{}{}
+	for _, set := range sets {
+		whole := a.wholeCardVFsFromDevices(set)
+		for pid, vfs := range a.planPartitionsForSet(whole, partitions) {
+			if desired[pid] == nil {
+				desired[pid] = map[string]struct{}{}
+			}
+			for _, vf := range vfs {
+				desired[pid][vf] = struct{}{}
+			}
+		}
+	}
+
+	// Adopt currently-allocated VFs into the tracked state without activating
+	// (an earlier Allocate activated them, possibly before a plugin restart).
+	for pid, set := range desired {
+		if a.activeVFs[pid] == nil {
+			a.activeVFs[pid] = map[string]struct{}{}
+		}
+		for vf := range set {
+			a.activeVFs[pid][vf] = struct{}{}
+		}
+	}
+
+	// Prune departed VFs per partition; deactivate a partition once it has none
+	// left. A running VM always reports its full VF set, so a multi-GPU
+	// partition's set is only emptied when its VM departs.
+	for pid, set := range a.activeVFs {
+		for vf := range set {
+			if _, ok := desired[pid][vf]; !ok {
+				delete(set, vf)
+			}
+		}
+		if len(set) == 0 {
+			delete(a.activeVFs, pid)
+			if derr := client.Deactivate(pid); derr != nil && !errors.Is(derr, fabric.ErrPartitionNotActive) {
+				log.Printf("fabric: reconcile could not deactivate empty partition %d: %v", pid, derr)
+			} else {
+				log.Printf("fabric: reconcile deactivated empty partition %d (no VFs remain)", pid)
+			}
+		}
+	}
+	return nil
+}
+
+// wholeCardVFsFromDevices filters a container's device list to its whole-card
+// vGPU VFs (nvidia resources, SR-IOV, non-MIG) and resolves each to its PF and
+// physicalId. Devices that are not whole-card VFs are dropped — they are never
+// fabric-activated.
+func (a *fabricActivator) wholeCardVFsFromDevices(devices []allocatedDevice) []resolvedVF {
+	var whole []resolvedVF
 	for _, dev := range devices {
 		if !isNvidiaResource(dev.resourceName) {
 			continue
@@ -450,43 +803,224 @@ func (a *fabricActivator) reconcile(client fabric.Client, partitions []fabric.Pa
 			continue // not an SR-IOV VF
 		}
 		if mig, err := a.migMode(pf); err == nil && mig {
-			continue // MIG GPU: never activated, so not tracked for deactivation
+			continue // MIG GPU: never activated
 		}
-		partitionID, err := a.resolvePartitionID(partitions, dev.deviceID, pf)
+		modID, err := a.moduleIDCached(pf)
 		if err != nil {
-			continue // no single-GPU partition
+			continue // cannot resolve; never activated on our watch
 		}
-		if desired[partitionID] == nil {
-			desired[partitionID] = map[string]struct{}{}
+		whole = append(whole, resolvedVF{vf: dev.deviceID, pf: pf, moduleID: modID})
+	}
+	return whole
+}
+
+// planPartitionsForSet maps one VM's whole-card VF set to the partition(s) it was
+// bound to, mirroring the activation decision so reconcile tracks exactly what
+// Activate created: a single multi-GPU partition when the set matches one
+// (one VF per member GPU), otherwise each VF on its own single-GPU partition
+// (the per-GPU / fail-open shape, and the natural mapping for a one-card VM).
+func (a *fabricActivator) planPartitionsForSet(whole []resolvedVF, partitions []fabric.Partition) map[uint32][]string {
+	out := map[uint32][]string{}
+	if len(whole) == 0 {
+		return out
+	}
+	if len(whole) > 1 {
+		moduleIDs := make([]uint32, len(whole))
+		for i, r := range whole {
+			moduleIDs[i] = r.moduleID
 		}
-		desired[partitionID][dev.deviceID] = struct{}{}
+		if p, err := fabric.PartitionForModuleIDs(moduleIDs, partitions); err == nil && len(p.GPUs) == len(whole) {
+			vfs := make([]string, len(whole))
+			for i, r := range whole {
+				vfs[i] = r.vf
+			}
+			out[p.ID] = vfs
+			return out
+		}
+		// No matching multi-GPU partition: fall through to per-GPU single ones.
+	}
+	for _, r := range whole {
+		p, err := fabric.SingleGPUPartitionForModuleID(r.moduleID, partitions)
+		if err != nil {
+			continue // no single-GPU partition; never activated
+		}
+		out[p.ID] = append(out[p.ID], r.vf)
+	}
+	return out
+}
+
+// PreferredVFSet implements the GetPreferredAllocation preference for the
+// whole-card vGPU resource. When kubelet asks for `size` devices (size >= 2) from
+// the offered VFs, it returns a subset whose GPUs exactly form a defined fabric
+// partition, so the resulting VM can get NVLink peer-to-peer between the cards;
+// among candidate partitions it prefers ones that fragment the fewest larger
+// still-available partitions. It returns (nil, false) — deferring to the caller's
+// default preference — for single-device requests, when fabric activation is
+// unsupported or unreachable, or when no partition-aligned set can satisfy the
+// request (including all must-include devices).
+func (a *fabricActivator) PreferredVFSet(available, mustInclude []string, size int) ([]string, bool) {
+	if size < 2 || len(available) < size {
+		return nil, false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.unsupported {
+		return nil, false
 	}
 
-	// Adopt currently-allocated VFs into the tracked state without activating.
-	for partitionID, set := range desired {
-		if a.activeVFs[partitionID] == nil {
-			a.activeVFs[partitionID] = map[string]struct{}{}
-		}
-		for vf := range set {
-			a.activeVFs[partitionID][vf] = struct{}{}
-		}
+	partitions, ok := a.topologyLocked()
+	if !ok {
+		return nil, false
 	}
 
-	// Prune departed VFs; deactivate a partition once it has none left.
-	for partitionID, set := range a.activeVFs {
-		for vf := range set {
-			if _, ok := desired[partitionID][vf]; !ok {
-				delete(set, vf)
-			}
+	// Map each offered whole-card VF to its GPU physicalId (skip non-SR-IOV and
+	// MIG VFs — they cannot be whole-card partition members).
+	vfByModule := map[uint32]string{}
+	availableModules := map[uint32]struct{}{}
+	for _, vf := range available {
+		pf, err := a.pfForVF(vf)
+		if err != nil {
+			continue
 		}
-		if len(set) == 0 {
-			delete(a.activeVFs, partitionID)
-			if derr := client.Deactivate(partitionID); derr != nil && !errors.Is(derr, fabric.ErrPartitionNotActive) {
-				log.Printf("fabric: reconcile could not deactivate empty partition %d: %v", partitionID, derr)
-			} else {
-				log.Printf("fabric: reconcile deactivated empty partition %d (no VFs remain)", partitionID)
+		if mig, err := a.migMode(pf); err == nil && mig {
+			continue
+		}
+		modID, err := a.moduleIDCached(pf)
+		if err != nil {
+			continue
+		}
+		vfByModule[modID] = vf
+		availableModules[modID] = struct{}{}
+	}
+
+	// physicalIds of the must-include VFs; the chosen partition must cover them.
+	mustModules := map[uint32]struct{}{}
+	for _, vf := range mustInclude {
+		pf, err := a.pfForVF(vf)
+		if err != nil {
+			return nil, false // cannot guarantee inclusion; defer to default
+		}
+		modID, err := a.moduleIDCached(pf)
+		if err != nil {
+			return nil, false
+		}
+		mustModules[modID] = struct{}{}
+	}
+
+	// Candidate partitions: exactly `size` GPUs, all offered, covering the
+	// must-include GPUs. Score each by how many larger available partitions it
+	// would fragment (lower is better).
+	type candidate struct {
+		partition fabric.Partition
+		fragments int
+	}
+	var best *candidate
+	for i := range partitions {
+		p := partitions[i]
+		if len(p.GPUs) != size {
+			continue
+		}
+		if !partitionGPUsAvailable(p, availableModules) {
+			continue
+		}
+		if !partitionCoversModules(p, mustModules) {
+			continue
+		}
+		c := candidate{partition: p, fragments: countFragmentedLargerPartitions(p, partitions, availableModules)}
+		if best == nil || c.fragments < best.fragments || (c.fragments == best.fragments && c.partition.ID < best.partition.ID) {
+			cc := c
+			best = &cc
+		}
+	}
+	if best == nil {
+		return nil, false
+	}
+
+	out := make([]string, 0, size)
+	for _, g := range best.partition.GPUs {
+		vf, ok := vfByModule[g.PhysicalID]
+		if !ok {
+			return nil, false // shouldn't happen after partitionGPUsAvailable
+		}
+		out = append(out, vf)
+	}
+	return out, true
+}
+
+// topologyLocked returns the fabric partition topology (GPU membership is static
+// for the machine's lifetime), fetching and caching it on first use. It is
+// best-effort: any Fabric Manager error (including an unsupported system) returns
+// ok=false so the preference path silently defers to the default. Caller holds a.mu.
+func (a *fabricActivator) topologyLocked() ([]fabric.Partition, bool) {
+	if a.topology != nil {
+		return a.topology, true
+	}
+	client, err := a.ensureClient()
+	if err != nil {
+		return nil, false
+	}
+	partitions, err := client.GetSupportedPartitions()
+	if err != nil {
+		if errors.Is(err, fabric.ErrFabricNotSupported) {
+			a.unsupported = true
+		}
+		return nil, false
+	}
+	a.topology = partitions
+	return partitions, true
+}
+
+// partitionGPUsAvailable reports whether every GPU of partition p is in the
+// offered set.
+func partitionGPUsAvailable(p fabric.Partition, available map[uint32]struct{}) bool {
+	for _, g := range p.GPUs {
+		if _, ok := available[g.PhysicalID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// partitionCoversModules reports whether partition p's GPUs include every
+// physicalId in modules (trivially true when modules is empty).
+func partitionCoversModules(p fabric.Partition, modules map[uint32]struct{}) bool {
+	if len(modules) == 0 {
+		return true
+	}
+	have := make(map[uint32]struct{}, len(p.GPUs))
+	for _, g := range p.GPUs {
+		have[g.PhysicalID] = struct{}{}
+	}
+	for m := range modules {
+		if _, ok := have[m]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// countFragmentedLargerPartitions counts partitions strictly larger than p that
+// are fully available AND overlap p's GPUs: choosing p would break each of them
+// for a future larger request, so a lower count is preferred.
+func countFragmentedLargerPartitions(p fabric.Partition, partitions []fabric.Partition, available map[uint32]struct{}) int {
+	pset := make(map[uint32]struct{}, len(p.GPUs))
+	for _, g := range p.GPUs {
+		pset[g.PhysicalID] = struct{}{}
+	}
+	n := 0
+	for _, q := range partitions {
+		if len(q.GPUs) <= len(p.GPUs) {
+			continue
+		}
+		if !partitionGPUsAvailable(q, available) {
+			continue
+		}
+		for _, g := range q.GPUs {
+			if _, ok := pset[g.PhysicalID]; ok {
+				n++
+				break
 			}
 		}
 	}
-	return nil
+	return n
 }
