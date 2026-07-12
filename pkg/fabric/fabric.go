@@ -97,8 +97,9 @@ type Partition struct {
 }
 
 // IsSingleGPU reports whether the partition covers exactly one physical GPU.
-// A vGPU VF's fabric partition is always the single-GPU partition of the VF's
-// physical GPU.
+// A single whole-card vGPU VF maps to the single-GPU partition of its physical
+// GPU; several whole cards allocated together map to the multi-GPU partition
+// spanning exactly those GPUs (see PartitionForModuleIDs).
 func (p Partition) IsSingleGPU() bool {
 	return len(p.GPUs) == 1
 }

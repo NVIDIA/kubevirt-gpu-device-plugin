@@ -185,6 +185,73 @@ func TestResolvePartitionIDForVF(t *testing.T) {
 	}
 }
 
+func TestPartitionForModuleIDs(t *testing.T) {
+	parts := hgxPartitions()
+	tests := []struct {
+		name     string
+		moduleID []uint32
+		wantPart uint32
+	}{
+		{"single-gpu module 3", []uint32{3}, 11},
+		{"2-gpu pair {1,2}", []uint32{1, 2}, 3},
+		{"2-gpu pair {3,4}", []uint32{3, 4}, 4},
+		{"2-gpu pair unordered {8,7}", []uint32{8, 7}, 6},
+		{"4-gpu {1,2,3,4}", []uint32{1, 2, 3, 4}, 1},
+		{"4-gpu {5,6,7,8}", []uint32{5, 6, 7, 8}, 2},
+		{"all eight", []uint32{1, 2, 3, 4, 5, 6, 7, 8}, 0},
+		{"duplicate ids collapse to the single-GPU set", []uint32{3, 3}, 11},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := PartitionForModuleIDs(tt.moduleID, parts)
+			if err != nil {
+				t.Fatalf("PartitionForModuleIDs(%v) error: %v", tt.moduleID, err)
+			}
+			if got.ID != tt.wantPart {
+				t.Fatalf("PartitionForModuleIDs(%v) = partition %d, want %d", tt.moduleID, got.ID, tt.wantPart)
+			}
+		})
+	}
+}
+
+func TestPartitionForModuleIDsNoMatch(t *testing.T) {
+	parts := hgxPartitions()
+	// {2,3} is a valid pair of GPUs, but the fabric only offers {1,2}, {3,4},
+	// {5,6}, {7,8} as 2-GPU partitions — {2,3} spans two of them, so no single
+	// partition covers it.
+	if _, err := PartitionForModuleIDs([]uint32{2, 3}, parts); !errors.Is(err, ErrNoMatchingPartition) {
+		t.Fatalf("PartitionForModuleIDs({2,3}) error = %v, want ErrNoMatchingPartition", err)
+	}
+	// A 3-GPU set has no partition at all in this layout.
+	if _, err := PartitionForModuleIDs([]uint32{1, 2, 3}, parts); !errors.Is(err, ErrNoMatchingPartition) {
+		t.Fatalf("PartitionForModuleIDs({1,2,3}) error = %v, want ErrNoMatchingPartition", err)
+	}
+	// An unknown id.
+	if _, err := PartitionForModuleIDs([]uint32{99}, parts); !errors.Is(err, ErrNoMatchingPartition) {
+		t.Fatalf("PartitionForModuleIDs({99}) error = %v, want ErrNoMatchingPartition", err)
+	}
+	// Empty input.
+	if _, err := PartitionForModuleIDs(nil, parts); !errors.Is(err, ErrNoMatchingPartition) {
+		t.Fatalf("PartitionForModuleIDs(nil) error = %v, want ErrNoMatchingPartition", err)
+	}
+}
+
+func TestPartitionForModuleIDsDuplicateMatch(t *testing.T) {
+	// Two partitions covering the same GPU set is an inconsistent list and must
+	// be reported, not silently resolved to one of them.
+	parts := []Partition{
+		{ID: 3, GPUs: nGPUs(1, 2)},
+		{ID: 9, GPUs: nGPUs(1, 2)},
+	}
+	_, err := PartitionForModuleIDs([]uint32{1, 2}, parts)
+	if err == nil {
+		t.Fatal("expected error on duplicate matching partitions, got nil")
+	}
+	if errors.Is(err, ErrNoMatchingPartition) {
+		t.Fatalf("duplicate match should not be reported as no-match: %v", err)
+	}
+}
+
 func TestResolvePartitionIDForVFErrors(t *testing.T) {
 	parts := hgxPartitions()
 	okPF := func(string) (string, error) { return "0000:41:00.0", nil }
