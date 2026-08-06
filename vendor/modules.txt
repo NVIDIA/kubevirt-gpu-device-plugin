@@ -1,6 +1,14 @@
 # github.com/Masterminds/semver/v3 v3.4.0
 ## explicit; go 1.21
 github.com/Masterminds/semver/v3
+# github.com/NVIDIA/go-nvfm v0.0.0-20260629235037-b587f11880ea
+## explicit; go 1.24
+github.com/NVIDIA/go-nvfm/pkg/dl
+github.com/NVIDIA/go-nvfm/pkg/nvfm
+# github.com/NVIDIA/go-nvml v0.13.0-1
+## explicit; go 1.20
+github.com/NVIDIA/go-nvml/pkg/dl
+github.com/NVIDIA/go-nvml/pkg/nvml
 # github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48
 ## explicit; go 1.14
 github.com/NVIDIA/gpu-monitoring-tools/bindings/go/nvml
@@ -258,3 +266,4 @@ k8s.io/klog/v2/internal/sloghandler
 # k8s.io/kubelet v0.33.5
 ## explicit; go 1.24.0
 k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1
+k8s.io/kubelet/pkg/apis/podresources/v1

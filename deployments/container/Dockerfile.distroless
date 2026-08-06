@@ -29,7 +29,33 @@ FROM nvcr.io/nvidia/cuda:13.3.1-base-ubi9 AS builder
 
 ARG GOLANG_VERSION
 
-RUN yum install -y wget tar gzip make gcc glibc-devel
+# Version of the Fabric Manager SDK library (libnvfm.so.1) bundled for the
+# fabric partition activation cgo binding. Its ABI must match the target host's
+# Fabric Manager daemon major version (see docs/fabric-partition-activation.md).
+ARG FABRIC_MANAGER_VERSION=580.126.20-1
+
+RUN yum install -y wget tar gzip make gcc glibc-devel binutils xz
+
+# Fetch libnvfm.so.1 from the CUDA repository package and stage it for the
+# runtime image. The plugin drives libnvfm through the official go-nvfm bindings,
+# which dlopen the library at runtime, so it is not needed at link time (only the
+# versioned shared object is copied into the runtime image below). go-nvfm ships
+# its own copy of the FM SDK headers, so the proprietary headers are not vendored
+# into this repository.
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "${arch}" in \
+        x86_64) DEB_ARCH='amd64' ;; \
+        aarch64) DEB_ARCH='arm64' ;; \
+        *) echo "unsupported architecture ${arch} for libnvfm" ; exit 1 ;; \
+    esac; \
+    cd /tmp; \
+    wget -nv -O fm.deb \
+        "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${arch}/nvidia-fabricmanager-dev_${FABRIC_MANAGER_VERSION}_${DEB_ARCH}.deb"; \
+    ar x fm.deb; \
+    tar xf data.tar.xz; \
+    cp usr/lib/*/libnvfm.so.1 /usr/lib64/libnvfm.so.1; \
+    rm -rf /tmp/fm.deb /tmp/usr /tmp/*.tar.*
 
 RUN set -eux; \
     \
@@ -74,6 +100,10 @@ LABEL description="See summary"
 
 COPY --from=builder /workspace/nvidia-kubevirt-gpu-device-plugin /usr/bin/
 COPY --from=builder /workspace/utils/pci.ids /usr/pci.ids
+# libnvfm.so.1 for the fabric partition activation binding. go-nvfm dlopen's it
+# at runtime, so it must be present in the runtime image on the loader search
+# path (go-nvfm is pointed at this versioned SONAME by pkg/fabric).
+COPY --from=builder /usr/lib64/libnvfm.so.1 /usr/lib/x86_64-linux-gnu/libnvfm.so.1
 
 USER 0:0
 

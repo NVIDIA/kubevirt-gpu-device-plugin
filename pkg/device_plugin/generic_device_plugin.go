@@ -430,6 +430,16 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 			}
 			envList[key] = append(envList[key], devAddrs...)
 		}
+		// Activate the NVLink fabric partition(s) for this request's whole set of
+		// VFs before the devices are handed to the virt-launcher pod, so the
+		// guest's first CUDA init succeeds on NVSwitch / FABRIC_MODE=2 systems.
+		// One VF activates its single-GPU partition; several whole cards in one
+		// request activate the single multi-GPU partition spanning them (NVLink
+		// peer-to-peer between the cards). No-op on non-fabric systems and for
+		// classic passthrough GPUs.
+		if err := activateFabricForVFs(req.DevicesIDs); err != nil {
+			return nil, fmt.Errorf("fabric partition activation failed for devices %v: %w", req.DevicesIDs, err)
+		}
 		egmPaths := egmPathsForAllocatedGPUs(req.DevicesIDs, egmDevices)
 		for _, egmPath := range egmPaths {
 			appendDeviceSpec(&deviceSpecs, seenDeviceSpecs, egmPath)
@@ -482,6 +492,18 @@ func (dpi *GenericDevicePlugin) GetPreferredAllocation(ctx context.Context, in *
 	for idx, req := range in.ContainerRequests {
 		log.Printf("[%s] Container request %d: Available devices=%v, MustInclude=%v, AllocationSize=%d",
 			dpi.deviceName, idx, req.AvailableDeviceIDs, req.MustIncludeDeviceIDs, req.AllocationSize)
+
+		// For a multi-GPU whole-card request, prefer a VF set whose GPUs form a
+		// defined NVLink fabric partition, so the resulting VM gets peer-to-peer
+		// between its cards. Falls through to the NUMA-affinity preference below
+		// for single-device requests, non-fabric systems, or when no
+		// partition-aligned set is available.
+		if set, ok := preferredFabricVFSet(req.AvailableDeviceIDs, req.MustIncludeDeviceIDs, int(req.AllocationSize)); ok {
+			log.Printf("[%s] Preferred fabric-partition-aligned allocation for container %d: %v", dpi.deviceName, idx, set)
+			response.ContainerResponses = append(response.ContainerResponses,
+				&pluginapi.ContainerPreferredAllocationResponse{DeviceIDs: set})
+			continue
+		}
 
 		// Build a map of device ID to NUMA node from our device list
 		deviceToNUMA := make(map[string]int64)
