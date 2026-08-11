@@ -16,7 +16,7 @@ MODULE := kubevirt-gpu-device-plugin
 
 REGISTRY ?= nvcr.io/nvidia
 
-VERSION ?= v1.5.0
+VERSION ?= v1.5.1
 
 GOLANG_VERSION ?= 1.26.1
 

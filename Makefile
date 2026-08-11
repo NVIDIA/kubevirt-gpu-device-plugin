@@ -70,7 +70,7 @@ mod-tidy:
 	done
 
 mod-vendor:
-	@for mod in $$(find . -name go.mod -not -path "./testdata/*" -not -path "./third_party/*" -not -path "./deployments/*"); do \
+	@for mod in $$(find . -name go.mod -not -path "./testdata/*" -not -path "./third_party/*" -not -path "./deployments/*" -not -path "./tools/*"); do \
 		echo "Vendoring $$mod..."; ( \
 			cd $$(dirname $$mod) && go mod vendor \
 			) || exit 1; \
@@ -84,7 +84,22 @@ mod-verify:
 	done
 
 check-vendor: vendor
-	git diff --exit-code HEAD -- go.mod go.sum vendor
+	git diff --exit-code HEAD -- go.mod go.sum tools/go.mod tools/go.sum vendor
+
+.PHONY: install-tools notices notices-check
+install-tools:
+	@mkdir -p $(CURDIR)/bin
+	@cd tools && GOBIN=$(CURDIR)/bin $(GO) install github.com/google/go-licenses/v2
+
+notices: install-tools
+	@bash tools/generate-notices.sh
+
+notices-check: install-tools
+	@tmp="$$(mktemp)"; \
+	trap 'rm -f "$$tmp"' EXIT; \
+	OUTPUT="$$tmp" bash tools/generate-notices.sh; \
+	diff -u THIRD_PARTY_NOTICES.md "$$tmp" \
+		|| { echo "ERROR: THIRD_PARTY_NOTICES.md is stale; run 'make notices' and commit it."; exit 1; }
 
 update-pcidb:
 	wget $(PCI_IDS_URL) -O $(CURDIR)/utils/pci.ids

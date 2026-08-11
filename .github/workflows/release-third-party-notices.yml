@@ -1,0 +1,73 @@
+# Copyright 2026 NVIDIA CORPORATION
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Release Third-Party Notices
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub Release tag to receive the committed notice
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  upload-notices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Resolve release tag
+        id: release
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          TAG="${EVENT_TAG:-${INPUT_TAG}}"
+          if [ -z "${TAG}" ]; then
+            echo "::error::could not determine the GitHub Release tag"
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout the tagged commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          persist-credentials: false
+
+      - name: Verify the committed notice
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ ! -s THIRD_PARTY_NOTICES.md ]; then
+            echo "::error::THIRD_PARTY_NOTICES.md is missing or empty at ${RELEASE_TAG}"
+            exit 1
+          fi
+          git ls-files --error-unmatch THIRD_PARTY_NOTICES.md >/dev/null
+          sha256sum THIRD_PARTY_NOTICES.md
+
+      - name: Attach the exact committed notice to the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: gh release upload "${RELEASE_TAG}" THIRD_PARTY_NOTICES.md --clobber

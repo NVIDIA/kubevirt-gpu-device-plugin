@@ -1,0 +1,16 @@
+# module	version	compiled source file (relative to module root)	exact upstream copyright notice
+github.com/NVIDIA/gpu-monitoring-tools	v0.0.0-20211102125545-5a2c58442e48	bindings/go/nvml/nvml.go	Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
+github.com/NVIDIA/gpu-monitoring-tools	v0.0.0-20211102125545-5a2c58442e48	bindings/go/nvml/mig.go	Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
+github.com/NVIDIA/gpu-monitoring-tools	v0.0.0-20211102125545-5a2c58442e48	bindings/go/nvml/bindings.go	Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+github.com/NVIDIA/gpu-monitoring-tools	v0.0.0-20211102125545-5a2c58442e48	bindings/go/nvml/nvml.h	Copyright 1993-2020 NVIDIA Corporation.  All rights reserved.
+github.com/go-logr/logr	v1.4.3	logr.go	Copyright 2019 The logr Authors.
+github.com/go-logr/logr	v1.4.3	discard.go	Copyright 2020 The logr Authors.
+github.com/go-logr/logr	v1.4.3	context.go	Copyright 2023 The logr Authors.
+google.golang.org/genproto/googleapis/rpc	v0.0.0-20251202230838-ff82c1b0f217	status/status.pb.go	Copyright 2025 Google LLC
+k8s.io/klog/v2	v2.140.0	exit.go	Copyright 2013 Google Inc. All Rights Reserved.
+k8s.io/klog/v2	v2.140.0	internal/clock/clock.go	Copyright 2014 The Kubernetes Authors.
+k8s.io/klog/v2	v2.140.0	contextual.go	Copyright 2021 The Kubernetes Authors.
+k8s.io/klog/v2	v2.140.0	exit.go	Copyright 2022 The Kubernetes Authors.
+k8s.io/klog/v2	v2.140.0	format.go	Copyright 2023 The Kubernetes Authors.
+k8s.io/kubelet	v0.33.5	pkg/apis/deviceplugin/v1beta1/constants.go	Copyright 2018 The Kubernetes Authors.
+k8s.io/kubelet	v0.33.5	pkg/apis/deviceplugin/v1beta1/api.pb.go	Copyright The Kubernetes Authors.
