@@ -1,0 +1,14 @@
+{{if and (not .Standard) .Module}}
+{{range .GoFiles}}{{$.Module.Path}}{{"\t"}}{{$.Module.Version}}{{"\t"}}{{$.ImportPath}}{{"\t"}}{{.}}{{"\n"}}{{end}}
+{{range .CgoFiles}}{{$.Module.Path}}{{"\t"}}{{$.Module.Version}}{{"\t"}}{{$.ImportPath}}{{"\t"}}{{.}}{{"\n"}}{{end}}
+{{range .CFiles}}{{$.Module.Path}}{{"\t"}}{{$.Module.Version}}{{"\t"}}{{$.ImportPath}}{{"\t"}}{{.}}{{"\n"}}{{end}}
+{{range .CXXFiles}}{{$.Module.Path}}{{"\t"}}{{$.Module.Version}}{{"\t"}}{{$.ImportPath}}{{"\t"}}{{.}}{{"\n"}}{{end}}
+{{range .MFiles}}{{$.Module.Path}}{{"\t"}}{{$.Module.Version}}{{"\t"}}{{$.ImportPath}}{{"\t"}}{{.}}{{"\n"}}{{end}}
+{{range .HFiles}}{{$.Module.Path}}{{"\t"}}{{$.Module.Version}}{{"\t"}}{{$.ImportPath}}{{"\t"}}{{.}}{{"\n"}}{{end}}
+{{range .FFiles}}{{$.Module.Path}}{{"\t"}}{{$.Module.Version}}{{"\t"}}{{$.ImportPath}}{{"\t"}}{{.}}{{"\n"}}{{end}}
+{{range .SFiles}}{{$.Module.Path}}{{"\t"}}{{$.Module.Version}}{{"\t"}}{{$.ImportPath}}{{"\t"}}{{.}}{{"\n"}}{{end}}
+{{range .SwigFiles}}{{$.Module.Path}}{{"\t"}}{{$.Module.Version}}{{"\t"}}{{$.ImportPath}}{{"\t"}}{{.}}{{"\n"}}{{end}}
+{{range .SwigCXXFiles}}{{$.Module.Path}}{{"\t"}}{{$.Module.Version}}{{"\t"}}{{$.ImportPath}}{{"\t"}}{{.}}{{"\n"}}{{end}}
+{{range .SysoFiles}}{{$.Module.Path}}{{"\t"}}{{$.Module.Version}}{{"\t"}}{{$.ImportPath}}{{"\t"}}{{.}}{{"\n"}}{{end}}
+{{range .EmbedFiles}}{{$.Module.Path}}{{"\t"}}{{$.Module.Version}}{{"\t"}}{{$.ImportPath}}{{"\t"}}{{.}}{{"\n"}}{{end}}
+{{end}}
