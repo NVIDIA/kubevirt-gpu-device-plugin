@@ -83,7 +83,8 @@ jobs:
       - name: Build image
         env:
           IMAGE_NAME: ghcr.io/${LOWERCASE_REPO_OWNER}/kubevirt-gpu-device-plugin
-          VERSION: ${COMMIT_SHORT_SHA}-${{ matrix.arch }}
+          VERSION: ${COMMIT_SHORT_SHA}
+          IMAGE_TAG: ${COMMIT_SHORT_SHA}-${{ matrix.arch }}
           DOCKER_BUILD_PLATFORM_OPTIONS: "--platform=linux/${{ matrix.arch }}"
           GOPROXY: ${{ steps.setup-go-proxy.outputs.goproxy-url }}
         run: |

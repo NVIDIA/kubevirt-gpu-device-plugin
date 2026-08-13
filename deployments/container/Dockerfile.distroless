@@ -63,6 +63,8 @@ RUN CGO_ENABLED=1 \
 FROM nvcr.io/nvidia/distroless/go:v4.1.1
 
 ARG VERSION
+ARG GIT_COMMIT
+ARG BUILD_TIMESTAMP
 
 LABEL io.k8s.display-name="NVIDIA KubeVirt GPU Device Plugin"
 LABEL name="NVIDIA KubeVirt GPU Device Plugin"
@@ -70,7 +72,17 @@ LABEL vendor="NVIDIA"
 LABEL version="${VERSION}"
 LABEL release="N/A"
 LABEL summary="NVIDIA device plugin for KubeVirt"
-LABEL description="See summary"
+LABEL description="NVIDIA device plugin for KubeVirt"
+LABEL org.opencontainers.image.base.name="nvcr.io/nvidia/distroless/go"
+LABEL org.opencontainers.image.created="${BUILD_TIMESTAMP}"
+LABEL org.opencontainers.image.description="NVIDIA device plugin for KubeVirt"
+LABEL org.opencontainers.image.documentation="https://docs.nvidia.com/datacenter/cloud-native/gpu-operator"
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
+LABEL org.opencontainers.image.source="https://github.com/NVIDIA/kubevirt-gpu-device-plugin.git"
+LABEL org.opencontainers.image.title="NVIDIA KubeVirt GPU Device Plugin"
+LABEL org.opencontainers.image.url="https://catalog.ngc.nvidia.com/orgs/nvidia/containers/kubevirt-gpu-device-plugin"
+LABEL org.opencontainers.image.vendor="NVIDIA"
+LABEL org.opencontainers.image.version="${VERSION}"
 
 COPY --from=builder /workspace/nvidia-kubevirt-gpu-device-plugin /usr/bin/
 COPY --from=builder /workspace/utils/pci.ids /usr/pci.ids

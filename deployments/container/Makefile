@@ -27,7 +27,8 @@ GOPROXY ?= https://proxy.golang.org,direct
 
 IMAGE_VERSION := $(VERSION)
 
-IMAGE = $(IMAGE_NAME):$(IMAGE_VERSION)
+IMAGE_TAG ?= $(IMAGE_VERSION)
+IMAGE = $(IMAGE_NAME):$(IMAGE_TAG)
 
 OUT_IMAGE_NAME ?= $(IMAGE_NAME)
 OUT_IMAGE_VERSION ?= $(IMAGE_VERSION)
@@ -63,6 +64,7 @@ $(BUILD_TARGETS): build-%:
 		--build-arg VERSION="$(VERSION)" \
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
 		--build-arg GOPROXY="$(GOPROXY)" \
+		--build-arg BUILD_TIMESTAMP="$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")" \
 		--file $(DOCKERFILE) \
 		$(CURDIR)
 ifeq ($(PUSH_ON_BUILD),true)
