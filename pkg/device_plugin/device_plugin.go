@@ -89,8 +89,11 @@ var stop = make(chan struct{})
 func InitiateDevicePlugin() {
 	//Identifies GPUs and represents it in appropriate structures
 	createIommuDeviceMap()
-	//Identifies vGPUs and represents it in appropriate structures
+	//Identifies mdev-backed vGPUs and represents it in appropriate structures
 	createVgpuIDMap()
+	//Identifies vGPUs exposed through the vendor-specific VFIO framework
+	//(Ada/Hopper+ GPUs, which do not support mdev)
+	createVfioVGpuMap()
 	//Creates and starts device plugin
 	createDevicePlugins()
 }
@@ -104,6 +107,7 @@ func createDevicePlugins() {
 	log.Printf("Device Map %v", deviceMap)
 	log.Println("vGPU Map ", vGpuMap)
 	log.Println("GPU vGPU Map ", gpuVgpuMap)
+	log.Println("VFIO vGPU Map ", vfioVGpuMap)
 
 	//Iterate over deivceMap to create device plugin for each type of GPU on the host
 	for k, gpuDevices := range deviceMap {
@@ -162,6 +166,32 @@ func createDevicePlugins() {
 			vGpuDevicePlugins = append(vGpuDevicePlugins, dp)
 		}
 	}
+	//Iterate over vfioVGpuMap to create a device plugin for each vGPU profile
+	//exposed through the vendor-specific VFIO framework. These devices are
+	//grouped by profile name (unlike deviceMap, which groups by raw PCI
+	//device id) but otherwise use the same PCI-passthrough-style contract as
+	//deviceMap, since vendor-VFIO VFs are ordinary PCI/IOMMU-group devices.
+	//These plugins are tracked in the vfioPlugins registry rather than the
+	//devicePlugins slice so the optional rediscovery loop can add and remove
+	//them by profile name while the plugin is running.
+	vfioPluginsMu.Lock()
+	vfioPlugins = make(map[string]*GenericDevicePlugin)
+	for k, gpuDevices := range vfioVGpuMap {
+		log.Printf("DP Name %s", k)
+		dp := NewGenericDevicePlugin(k, vfioDevicePathPrefix, buildVfioDevices(gpuDevices))
+		err := startDevicePlugin(dp)
+		if err != nil {
+			log.Printf("Error starting %s device plugin: %v", dp.deviceName, err)
+		} else {
+			vfioPlugins[k] = dp
+		}
+	}
+	vfioPluginsMu.Unlock()
+
+	//Start the optional vGPU rediscovery loop. It is a no-op unless the
+	//operator opts in via the rescan interval env var, so with the feature off
+	//the startup path above is unchanged.
+	startVfioVGpuRediscovery(stop)
 
 	<-stop
 	log.Printf("Shutting down device plugin controller")
@@ -172,6 +202,12 @@ func createDevicePlugins() {
 	for _, v := range vGpuDevicePlugins {
 		v.Stop()
 	}
+
+	vfioPluginsMu.Lock()
+	for _, v := range vfioPlugins {
+		v.Stop()
+	}
+	vfioPluginsMu.Unlock()
 
 }
 
@@ -356,12 +392,31 @@ func readGpuIDForVgpuFunc(basePath string, deviceAddress string) (string, error)
 
 }
 
+// getIommuMap returns a snapshot of iommuMap. It copies under mapsMu so callers
+// (Allocate, healthCheck) can range over the result while vGPU rediscovery may
+// be replacing this discovery's entries in the live map.
 func getIommuMap() map[string][]NvidiaGpuDevice {
-	return iommuMap
+	mapsMu.RLock()
+	defer mapsMu.RUnlock()
+	out := make(map[string][]NvidiaGpuDevice, len(iommuMap))
+	for group, devices := range iommuMap {
+		devicesCopy := make([]NvidiaGpuDevice, len(devices))
+		copy(devicesCopy, devices)
+		out[group] = devicesCopy
+	}
+	return out
 }
 
+// getBdfToIommuMap returns a snapshot of bdfToIommuMap under mapsMu, for the
+// same reason as getIommuMap.
 func getBdfToIommuMap() map[string]string {
-	return bdfToIommuMap
+	mapsMu.RLock()
+	defer mapsMu.RUnlock()
+	out := make(map[string]string, len(bdfToIommuMap))
+	for bdf, group := range bdfToIommuMap {
+		out[bdf] = group
+	}
+	return out
 }
 
 func getGpuVgpuMap() map[string][]string {
