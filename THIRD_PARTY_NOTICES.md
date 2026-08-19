@@ -56,12 +56,12 @@ notices-check` to verify the committed copy.
 | `github.com/go-logr/logr` | `v1.4.3` | Apache-2.0 | runtime graph |
 | `github.com/gogo/protobuf` | `v1.3.2` | BSD-3-Clause | runtime graph |
 | `go.yaml.in/yaml/v3` | `v3.0.4` | Apache-2.0 AND MIT | OSRB/nSpect reviewed supplement |
-| `golang.org/x/net` | `v0.49.0` | BSD-3-Clause | runtime graph |
-| `golang.org/x/sys` | `v0.40.0` | BSD-3-Clause | runtime graph |
-| `golang.org/x/text` | `v0.33.0` | BSD-3-Clause | runtime graph |
-| `google.golang.org/genproto/googleapis/rpc` | `v0.0.0-20251202230838-ff82c1b0f217` | Apache-2.0 | runtime graph |
-| `google.golang.org/grpc` | `v1.79.2` | Apache-2.0 | runtime graph |
-| `google.golang.org/protobuf` | `v1.36.10` | BSD-3-Clause | runtime graph |
+| `golang.org/x/net` | `v0.58.0` | BSD-3-Clause | runtime graph |
+| `golang.org/x/sys` | `v0.47.0` | BSD-3-Clause | runtime graph |
+| `golang.org/x/text` | `v0.41.0` | BSD-3-Clause | runtime graph |
+| `google.golang.org/genproto/googleapis/rpc` | `v0.0.0-20260414002931-afd174a4e478` | Apache-2.0 | runtime graph |
+| `google.golang.org/grpc` | `v1.82.1` | Apache-2.0 | runtime graph |
+| `google.golang.org/protobuf` | `v1.36.11` | BSD-3-Clause | runtime graph |
 | `k8s.io/klog/v2` | `v2.140.0` | Apache-2.0 | runtime graph |
 | `k8s.io/kubelet` | `v0.33.5` | Apache-2.0 | runtime graph |
 | `pci.ids` | `2025.07.11` | BSD-3-Clause (selected from GPL-2.0-or-later OR BSD-3-Clause) | shipped data file |
@@ -705,7 +705,7 @@ limitations under the License.
 
 ### golang.org/x/net
 
-* Version: `v0.49.0`
+* Version: `v0.58.0`
 * License(s): BSD-3-Clause
 * Inventory basis: runtime graph
 * Bundled source: `vendor/golang.org/x/net`
@@ -773,7 +773,7 @@ shall terminate as of the date such litigation is filed.
 
 ### golang.org/x/sys
 
-* Version: `v0.40.0`
+* Version: `v0.47.0`
 * License(s): BSD-3-Clause
 * Inventory basis: runtime graph
 * Bundled source: `vendor/golang.org/x/sys`
@@ -841,7 +841,7 @@ shall terminate as of the date such litigation is filed.
 
 ### golang.org/x/text
 
-* Version: `v0.33.0`
+* Version: `v0.41.0`
 * License(s): BSD-3-Clause
 * Inventory basis: runtime graph
 * Bundled source: `vendor/golang.org/x/text`
@@ -909,7 +909,7 @@ shall terminate as of the date such litigation is filed.
 
 ### google.golang.org/genproto/googleapis/rpc
 
-* Version: `v0.0.0-20251202230838-ff82c1b0f217`
+* Version: `v0.0.0-20260414002931-afd174a4e478`
 * License(s): Apache-2.0
 * Inventory basis: runtime graph
 * Bundled source: `vendor/google.golang.org/genproto/googleapis/rpc`
@@ -917,7 +917,7 @@ shall terminate as of the date such litigation is filed.
 #### Copyright notices
 
 ```text
-Copyright 2025 Google LLC
+Copyright 2026 Google LLC
 ```
 
 #### LICENSE
@@ -1130,7 +1130,7 @@ Copyright 2025 Google LLC
 
 ### google.golang.org/grpc
 
-* Version: `v1.79.2`
+* Version: `v1.82.1`
 * License(s): Apache-2.0
 * Inventory basis: runtime graph
 * Bundled source: `vendor/google.golang.org/grpc`
@@ -1371,7 +1371,7 @@ limitations under the License.
 
 ### google.golang.org/protobuf
 
-* Version: `v1.36.10`
+* Version: `v1.36.11`
 * License(s): BSD-3-Clause
 * Inventory basis: runtime graph
 * Bundled source: `vendor/google.golang.org/protobuf`

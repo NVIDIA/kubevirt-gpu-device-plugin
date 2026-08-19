@@ -6,7 +6,7 @@ github.com/NVIDIA/gpu-monitoring-tools	v0.0.0-20211102125545-5a2c58442e48	bindin
 github.com/go-logr/logr	v1.4.3	logr.go	Copyright 2019 The logr Authors.
 github.com/go-logr/logr	v1.4.3	discard.go	Copyright 2020 The logr Authors.
 github.com/go-logr/logr	v1.4.3	context.go	Copyright 2023 The logr Authors.
-google.golang.org/genproto/googleapis/rpc	v0.0.0-20251202230838-ff82c1b0f217	status/status.pb.go	Copyright 2025 Google LLC
+google.golang.org/genproto/googleapis/rpc	v0.0.0-20260414002931-afd174a4e478	status/status.pb.go	Copyright 2026 Google LLC
 k8s.io/klog/v2	v2.140.0	exit.go	Copyright 2013 Google Inc. All Rights Reserved.
 k8s.io/klog/v2	v2.140.0	internal/clock/clock.go	Copyright 2014 The Kubernetes Authors.
 k8s.io/klog/v2	v2.140.0	contextual.go	Copyright 2021 The Kubernetes Authors.
