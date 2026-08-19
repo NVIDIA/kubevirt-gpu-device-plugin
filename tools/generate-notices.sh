@@ -47,6 +47,9 @@ PCI_IDS_SHA256="a96cd22db83c10d9141ecd7b14325ed9c936de5ef01d78e7e7e43f070184270b
 # OSRB reviewed this component in the nSpect SBOM and explicitly required its
 # file-specific dual licensing to remain in the notices. This is a narrow,
 # reviewed supplement to the runtime graph; it is not a scan of all vendor/.
+# The dual-license determination was made by reading v3.0.4 specifically, so
+# it is pinned to that version and must be re-reviewed before it is trusted
+# for any other version.
 YAML_MODULE="go.yaml.in/yaml/v3"
 YAML_VERSION="v3.0.4"
 
@@ -183,9 +186,9 @@ collect_runtime_graph() {
         log "Collecting ${PACKAGES[*]} for ${goos}/${goarch} with CGO_ENABLED=1..."
 
         GOOS="${goos}" GOARCH="${goarch}" go list -deps \
-            -f '{{if and (not .Standard) .Module}}{{.ImportPath}},{{.Module.Path}},{{.Module.Version}}{{end}}' \
+            -f '{{if and (not .Standard) .Module}}{{.ImportPath}},{{.Module.Path}}{{end}}' \
             "${PACKAGES[@]}" \
-            | awk -F, -v local="${LOCAL_MODULE}" 'NF == 3 && $2 != local { print }' \
+            | awk -F, -v local="${LOCAL_MODULE}" 'NF == 2 && $2 != local { print }' \
             >> "${PKG_MODULES}"
 
         GOOS="${goos}" GOARCH="${goarch}" go list -deps \
@@ -194,7 +197,7 @@ collect_runtime_graph() {
 
         # In vendor mode go-licenses cannot construct useful source URLs from
         # this repository's intentionally short module path. URLs are not used
-        # here (module@version comes from go list), so keep those warnings in a
+        # here (module comes from go list), so keep those warnings in a
         # diagnostic file and print them only if classification itself fails.
         if ! GOOS="${goos}" GOARCH="${goarch}" "${GO_LICENSES}" csv "${PACKAGES[@]}" \
             --ignore="${LOCAL_MODULE}" \
@@ -210,17 +213,17 @@ collect_runtime_graph() {
     # Convert import-path/file pairs to paths relative to each module root so
     # the reviewed manifest is stable across checkout locations.
     awk -F '\t' 'BEGIN { OFS = "\t" }
-        NF == 4 {
-            if ($3 == $1) {
-                relative = $4
-            } else if (index($3, $1 "/") == 1) {
-                relative = substr($3, length($1) + 2) "/" $4
+        NF == 3 {
+            if ($2 == $1) {
+                relative = $3
+            } else if (index($2, $1 "/") == 1) {
+                relative = substr($2, length($1) + 2) "/" $3
             } else {
-                print "runtime package " $3 " is outside module " $1 > "/dev/stderr"
+                print "runtime package " $2 " is outside module " $1 > "/dev/stderr"
                 bad = 1
                 next
             }
-            print $1, $2, relative
+            print $1, relative
         }
         END { exit bad }
     ' "${RUNTIME_FILES_RAW}" | LC_ALL=C sort -u > "${RUNTIME_FILES}"
@@ -231,7 +234,7 @@ collect_runtime_graph() {
 }
 
 build_module_index() {
-    cut -d, -f2,3 "${PKG_MODULES}" | LC_ALL=C sort -u > "${RUNTIME_MODULES}"
+    cut -d, -f2 "${PKG_MODULES}" | LC_ALL=C sort -u > "${RUNTIME_MODULES}"
 
     # go-licenses reports the directory that owns the selected legal file. It
     # can therefore return a module root (github.com/gogo/protobuf) even when
@@ -241,7 +244,6 @@ build_module_index() {
     awk -F, '
         NR == FNR {
             modules[++count] = $1
-            module_version[$1] = $2
             next
         }
         $3 != "" {
@@ -252,50 +254,50 @@ build_module_index() {
                     best = module
                 }
             }
-            if (best != "") print best "," module_version[best] "," $3
+            if (best != "") print best "," $3
         }
     ' "${RUNTIME_MODULES}" "${LICENSE_CSV}" \
         | LC_ALL=C sort -u > "${MODULE_LICENSES}"
 
-    local module version
-    while IFS=, read -r module version; do
-        LC_ALL=C grep -q "^${module},${version}," "${MODULE_LICENSES}" \
-            || die "go-licenses did not classify runtime module ${module}@${version}."
+    local module
+    while IFS= read -r module; do
+        LC_ALL=C grep -q "^${module}," "${MODULE_LICENSES}" \
+            || die "go-licenses did not classify runtime module ${module}."
     done < "${RUNTIME_MODULES}"
 
     awk -F, '
         {
-            key = $1 SUBSEP $2
+            key = $1
             if (key != previous) {
-                if (NR > 1) print module "," version "," licenses ",runtime graph"
+                if (NR > 1) print module "," licenses ",runtime graph"
                 module = $1
-                version = $2
-                licenses = $3
+                licenses = $2
                 previous = key
             } else {
-                licenses = licenses " AND " $3
+                licenses = licenses " AND " $2
             }
         }
         END {
-            if (NR > 0) print module "," version "," licenses ",runtime graph"
+            if (NR > 0) print module "," licenses ",runtime graph"
         }
     ' "${MODULE_LICENSES}" > "${MODULE_INDEX}"
+
+    local vendored_yaml_version
+    vendored_yaml_version=$(awk -v module="${YAML_MODULE}" '$1 == "#" && $2 == module { print $3; exit }' "${MODULES_TXT}")
+    [[ "${vendored_yaml_version}" == "${YAML_VERSION}" ]] || die \
+        "reviewed ${YAML_MODULE} version is ${YAML_VERSION}, but vendor/modules.txt has ${vendored_yaml_version:-none}."
 
     # Preserve the reviewed file-specific dual-license result even if generic
     # classifiers choose one match from the combined upstream LICENSE file.
     awk -F, -v yaml="${YAML_MODULE}" 'BEGIN { OFS = "," }
-        $1 == yaml { $3 = "Apache-2.0 AND MIT"; $4 = "runtime graph; OSRB/nSpect dual-license override" }
+        $1 == yaml { $2 = "Apache-2.0 AND MIT"; $3 = "runtime graph; OSRB/nSpect dual-license override" }
         { print }
     ' "${MODULE_INDEX}" > "${MODULE_INDEX}.tmp"
     mv "${MODULE_INDEX}.tmp" "${MODULE_INDEX}"
 
     if ! cut -d, -f1 "${MODULE_INDEX}" | LC_ALL=C grep -qx "${YAML_MODULE}"; then
-        local vendored_yaml_version
-        vendored_yaml_version=$(awk -v module="${YAML_MODULE}" '$1 == "#" && $2 == module { print $3; exit }' "${MODULES_TXT}")
-        [[ "${vendored_yaml_version}" == "${YAML_VERSION}" ]] || die \
-            "reviewed ${YAML_MODULE} version is ${YAML_VERSION}, but vendor/modules.txt has ${vendored_yaml_version:-none}."
-        printf '%s,%s,%s,%s\n' \
-            "${YAML_MODULE}" "${YAML_VERSION}" "Apache-2.0 AND MIT" \
+        printf '%s,%s,%s\n' \
+            "${YAML_MODULE}" "Apache-2.0 AND MIT" \
             "OSRB/nSpect reviewed supplement" >> "${MODULE_INDEX}"
     fi
 
@@ -314,16 +316,16 @@ license_files_for_module() {
 }
 
 copyrights_for_module() {
-    local module="$1" version="$2"
-    awk -F '\t' -v module="${module}" -v version="${version}" \
-        '$1 == module && $2 == version { print $4 }' "${COPYRIGHTS_TSV}" \
+    local module="$1"
+    awk -F '\t' -v module="${module}" \
+        '$1 == module { print $3 }' "${COPYRIGHTS_TSV}" \
         | LC_ALL=C sort -u
 }
 
 runtime_copyrights_for_module() {
-    local module="$1" version="$2" mapped_module mapped_version source source_file
-    while IFS=$'\t' read -r mapped_module mapped_version source; do
-        [[ "${mapped_module}" == "${module}" && "${mapped_version}" == "${version}" ]] \
+    local module="$1" mapped_module source source_file
+    while IFS=$'\t' read -r mapped_module source; do
+        [[ "${mapped_module}" == "${module}" ]] \
             || continue
         source_file="vendor/${module}/${source}"
         [[ -f "${source_file}" ]] || continue
@@ -357,36 +359,36 @@ legal_files_have_real_copyright() {
 }
 
 validate_copyright_metadata() {
-    local malformed duplicate module version source notice source_file runtime_record
+    local malformed duplicate module source notice source_file runtime_record
     local reviewed_notices runtime_notices
 
-    malformed=$(awk -F '\t' '!/^#/ && NF && NF != 4 { print NR }' "${COPYRIGHTS_TSV}" \
+    malformed=$(awk -F '\t' '!/^#/ && NF && NF != 3 { print NR }' "${COPYRIGHTS_TSV}" \
         | paste -sd, -)
     [[ -z "${malformed}" ]] \
-        || die "${COPYRIGHTS_TSV} must contain four tab-separated fields; malformed line(s): ${malformed}."
+        || die "${COPYRIGHTS_TSV} must contain three tab-separated fields; malformed line(s): ${malformed}."
 
     duplicate=$(awk -F '\t' '
-        !/^#/ && NF == 4 {
-            key = $1 SUBSEP $2 SUBSEP $4
-            if (++seen[key] == 2) print $1 "@" $2 ": " $4
+        !/^#/ && NF == 3 {
+            key = $1 SUBSEP $3
+            if (++seen[key] == 2) print $1 ": " $3
         }
     ' "${COPYRIGHTS_TSV}" | head -1)
     [[ -z "${duplicate}" ]] \
         || die "duplicate reviewed copyright notice in ${COPYRIGHTS_TSV}: ${duplicate}"
 
-    while IFS=$'\t' read -r module version source notice; do
+    while IFS=$'\t' read -r module source notice; do
         [[ -n "${module}" && "${module}" != \#* ]] || continue
-        [[ -n "${version}" && -n "${source}" && -n "${notice}" ]] \
+        [[ -n "${source}" && -n "${notice}" ]] \
             || die "incomplete reviewed copyright entry for ${module}."
         [[ "${notice}" == Copyright* ]] \
-            || die "reviewed notice for ${module}@${version} is not a copyright line: ${notice}"
+            || die "reviewed notice for ${module} is not a copyright line: ${notice}"
         [[ "${notice}" != *'Copyright [yyyy]'* ]] \
             || die "the Apache copyright placeholder is not a component attribution."
 
-        LC_ALL=C grep -Fqx "${module},${version}" "${RUNTIME_MODULES}" \
-            || die "reviewed copyright entry is outside the runtime graph: ${module}@${version}."
+        LC_ALL=C grep -Fqx "${module}" "${RUNTIME_MODULES}" \
+            || die "reviewed copyright entry is outside the runtime graph: ${module}."
 
-        runtime_record=$(printf '%s\t%s\t%s' "${module}" "${version}" "${source}")
+        runtime_record=$(printf '%s\t%s' "${module}" "${source}")
         LC_ALL=C grep -Fqx "${runtime_record}" "${RUNTIME_FILES}" \
             || die "reviewed copyright source is not selected by either image build: ${module}/${source}."
 
@@ -401,37 +403,37 @@ validate_copyright_metadata() {
     # must equal all distinct copyright headers found in the first 50 lines of
     # its selected runtime files. This catches additions as well as stale
     # manifest entries without scanning unrelated packages under vendor/.
-    while IFS=$'\t' read -r module version; do
+    while IFS= read -r module; do
         [[ -n "${module}" && "${module}" != \#* ]] || continue
-        reviewed_notices=$(copyrights_for_module "${module}" "${version}")
-        runtime_notices=$(runtime_copyrights_for_module "${module}" "${version}")
+        reviewed_notices=$(copyrights_for_module "${module}")
+        runtime_notices=$(runtime_copyrights_for_module "${module}")
         if [[ "${reviewed_notices}" != "${runtime_notices}" ]]; then
-            printf 'Reviewed and runtime copyright notices differ for %s@%s:\n' \
-                "${module}" "${version}" >&2
+            printf 'Reviewed and runtime copyright notices differ for %s:\n' \
+                "${module}" >&2
             diff -u \
                 <(printf '%s\n' "${reviewed_notices}") \
                 <(printf '%s\n' "${runtime_notices}") >&2 || true
             die "update ${COPYRIGHTS_TSV} after reviewing the compiled copyright headers."
         fi
-    done < <(awk -F '\t' '!/^#/ && NF == 4 { print $1 "\t" $2 }' \
+    done < <(awk -F '\t' '!/^#/ && NF == 3 { print $1 }' \
         "${COPYRIGHTS_TSV}" | LC_ALL=C sort -u)
 
     # Every component must reproduce a real copyright either in its upstream
     # top-level legal files or through the compiled-file manifest above.
-    while IFS=, read -r module version _; do
+    while IFS=, read -r module _; do
         if legal_files_have_real_copyright "${module}"; then
             continue
         fi
-        [[ -n "$(copyrights_for_module "${module}" "${version}")" ]] \
-            || die "${module}@${version} has no component copyright attribution."
+        [[ -n "$(copyrights_for_module "${module}")" ]] \
+            || die "${module} has no component copyright attribution."
     done < "${MODULE_INDEX}"
 }
 
 validate_legal_files() {
-    local module version licenses basis count
-    while IFS=, read -r module version licenses basis; do
+    local module licenses basis count
+    while IFS=, read -r module licenses basis; do
         count=$(license_files_for_module "${module}" | wc -l | tr -d ' ')
-        ((count > 0)) || die "no top-level legal files found for ${module}@${version}."
+        ((count > 0)) || die "no top-level legal files found for ${module}."
     done < "${MODULE_INDEX}"
 
     local yaml_license="vendor/${YAML_MODULE}/LICENSE"
@@ -451,26 +453,24 @@ validate_legal_files() {
 }
 
 emit_index() {
-    local module version licenses basis
-    printf '| Component | Version | License(s) | Inventory basis |\n'
-    printf '|-----------|---------|------------|-----------------|\n'
-    while IFS=, read -r module version licenses basis; do
-        printf '| `%s` | `%s` | %s | %s |\n' "${module}" "${version}" "${licenses}" "${basis}"
+    local module licenses basis
+    printf '| Component | License(s) | Inventory basis |\n'
+    printf '|-----------|------------|-----------------|\n'
+    while IFS=, read -r module licenses basis; do
+        printf '| `%s` | %s | %s |\n' "${module}" "${licenses}" "${basis}"
     done < "${MODULE_INDEX}"
-    printf '| `pci.ids` | `%s` | BSD-3-Clause (selected from GPL-2.0-or-later OR BSD-3-Clause) | shipped data file |\n' \
-        "${PCI_IDS_VERSION}"
+    printf '| `pci.ids` | BSD-3-Clause (selected from GPL-2.0-or-later OR BSD-3-Clause) | shipped data file |\n'
 }
 
 emit_module_sections() {
-    local module version licenses basis file fence copyright_notices
-    while IFS=, read -r module version licenses basis; do
+    local module licenses basis file fence copyright_notices
+    while IFS=, read -r module licenses basis; do
         printf '### %s\n\n' "${module}"
-        printf '* Version: `%s`\n' "${version}"
         printf '* License(s): %s\n' "${licenses}"
         printf '* Inventory basis: %s\n' "${basis}"
         printf '* Bundled source: `vendor/%s`\n\n' "${module}"
 
-        copyright_notices=$(copyrights_for_module "${module}" "${version}")
+        copyright_notices=$(copyrights_for_module "${module}")
         if [[ -n "${copyright_notices}" ]]; then
             printf '#### Copyright notices\n\n'
             printf '```text\n%s\n```\n\n' "${copyright_notices}"
@@ -629,7 +629,7 @@ main() {
     compose_document
 
     local runtime_count total_count
-    runtime_count=$(awk -F, '$4 ~ /^runtime graph/ { count++ } END { print count+0 }' "${MODULE_INDEX}")
+    runtime_count=$(awk -F, '$3 ~ /^runtime graph/ { count++ } END { print count+0 }' "${MODULE_INDEX}")
     total_count=$(wc -l < "${MODULE_INDEX}" | tr -d ' ')
     log "Wrote ${OUTPUT} (${runtime_count} runtime modules, ${total_count} reviewed Go modules, plus pci.ids)"
 }
