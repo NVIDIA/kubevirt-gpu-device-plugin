@@ -16,8 +16,8 @@ MODULE := kubevirt-gpu-device-plugin
 
 REGISTRY ?= nvcr.io/nvidia
 
-VERSION ?= v1.5.1
+VERSION ?= v1.6.0
 
-GOLANG_VERSION ?= 1.26.5
+GOLANG_VERSION ?= 1.26.6
 
 GIT_COMMIT ?= $(shell git describe --match="" --dirty --long --always --abbrev=40 2> /dev/null || echo "")

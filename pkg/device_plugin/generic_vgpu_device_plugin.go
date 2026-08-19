@@ -53,6 +53,7 @@ var nvmlShutdown = nvml.Shutdown
 
 // Implements the kubernetes device plugin API
 type GenericVGpuDevicePlugin struct {
+	pluginapi.UnimplementedDevicePluginServer
 	devs       []*pluginapi.Device
 	server     *grpc.Server
 	socketPath string
@@ -213,7 +214,7 @@ func (dpi *GenericVGpuDevicePlugin) Allocate(ctx context.Context, reqs *pluginap
 		deviceSpecs := make([]*pluginapi.DeviceSpec, 0)
 		envList := map[string][]string{}
 
-		for _, str := range req.DevicesIDs {
+		for _, str := range req.DevicesIds {
 			vGpuID, err := readVgpuIDFromFile(vGpuBasePath, str, "mdev_type/name")
 			if err != nil || vGpuID != dpi.deviceName {
 				log.Println("Could not get vGPU type identifier for device ", str)

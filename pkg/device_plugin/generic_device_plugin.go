@@ -70,6 +70,7 @@ var discoverEGMDevices = discoverEGMDevicesFunc
 
 // Implements the kubernetes device plugin API
 type GenericDevicePlugin struct {
+	pluginapi.UnimplementedDevicePluginServer
 	devs       []*pluginapi.Device
 	server     *grpc.Server
 	socketPath string
@@ -353,7 +354,7 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 	log.Printf("[%s] ========== ALLOCATE CALLED ==========", dpi.deviceName)
 	log.Printf("[%s] Allocate() called with %d container request(s)", dpi.deviceName, len(reqs.ContainerRequests))
 	for i, req := range reqs.ContainerRequests {
-		log.Printf("[%s] Container request %d: DeviceIDs=%v", dpi.deviceName, i, req.DevicesIDs)
+		log.Printf("[%s] Container request %d: DeviceIDs=%v", dpi.deviceName, i, req.DevicesIds)
 	}
 	log.Printf("[%s] This means kubelet passed Topology Manager admission!", dpi.deviceName)
 
@@ -373,7 +374,7 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 		seenDeviceSpecs := make(map[string]struct{})
 		returnedMap := returnIommuMap()
 		bdfToIommu := returnBdfToIommuMap()
-		for _, bdf := range req.DevicesIDs {
+		for _, bdf := range req.DevicesIds {
 			iommuId, ok := bdfToIommu[bdf]
 			if !ok {
 				return nil, fmt.Errorf("invalid allocation request: unknown device: %s", bdf)
@@ -430,7 +431,7 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 			}
 			envList[key] = append(envList[key], devAddrs...)
 		}
-		egmPaths := egmPathsForAllocatedGPUs(req.DevicesIDs, egmDevices)
+		egmPaths := egmPathsForAllocatedGPUs(req.DevicesIds, egmDevices)
 		for _, egmPath := range egmPaths {
 			appendDeviceSpec(&deviceSpecs, seenDeviceSpecs, egmPath)
 		}
