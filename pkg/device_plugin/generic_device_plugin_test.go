@@ -180,7 +180,7 @@ var _ = Describe("Generic Device", func() {
 	It("Should allocate a device without error", func() {
 		devs := []string{pciAddress1}
 		envKey := gpuPrefix + "_FOO"
-		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIds: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
 		ctx := context.Background()
@@ -200,7 +200,7 @@ var _ = Describe("Generic Device", func() {
 		discoverEGMDevices = getFakeSharedEGMDevices
 		devs := []string{pciAddress1, pciAddress2}
 		envKey := gpuPrefix + "_FOO"
-		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIds: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
 		ctx := context.Background()
@@ -220,7 +220,7 @@ var _ = Describe("Generic Device", func() {
 		discoverEGMDevices = getFakeSharedEGMDevices
 		devs := []string{pciAddress1}
 		envKey := gpuPrefix + "_FOO"
-		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIds: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
 		ctx := context.Background()
@@ -236,7 +236,7 @@ var _ = Describe("Generic Device", func() {
 		readIDFromFile = getFakeIDFromFileForSharedEGM
 		discoverEGMDevices = getFakeMultiSocketEGMDevices
 		devs := []string{pciAddress1, pciAddress2}
-		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIds: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
 		ctx := context.Background()
@@ -258,7 +258,7 @@ var _ = Describe("Generic Device", func() {
 		}
 		devs := []string{pciAddress1}
 		envKey := gpuPrefix + "_FOO"
-		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIds: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
 		ctx := context.Background()
@@ -291,7 +291,7 @@ var _ = Describe("Generic Device", func() {
 		envKey := gpuPrefix + "_FOO"
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests,
-			&pluginapi.ContainerAllocateRequest{DevicesIDs: []string{gpuAddr}})
+			&pluginapi.ContainerAllocateRequest{DevicesIds: []string{gpuAddr}})
 		responses, err := dpi.Allocate(context.Background(), &requests)
 		Expect(err).To(BeNil())
 		// Only the requested GPU function is exposed; the audio sibling is NOT.
@@ -306,7 +306,7 @@ var _ = Describe("Generic Device", func() {
 		Expect(os.MkdirAll(filepath.Join(workDir, pciAddress1, "vfio-dev", "vfio3"), 0744)).To(Succeed())
 		devs := []string{pciAddress1}
 		envKey := gpuPrefix + "_FOO"
-		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIds: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
 		ctx := context.Background()
@@ -329,7 +329,7 @@ var _ = Describe("Generic Device", func() {
 
 	It("Should not allocate a device and also throw an error", func() {
 		devs := []string{pciAddress2}
-		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIds: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
 		ctx := context.Background()
@@ -339,7 +339,7 @@ var _ = Describe("Generic Device", func() {
 
 	It("Should not allocate a device and also throw an error", func() {
 		devs := []string{pciAddress3}
-		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIds: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
 		ctx := context.Background()
@@ -349,7 +349,7 @@ var _ = Describe("Generic Device", func() {
 
 	It("Should not allocate a device if request contains unknown BDF", func() {
 		devs := []string{pciAddress4}
-		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIDs: devs}
+		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIds: devs}
 		requests := pluginapi.AllocateRequest{}
 		requests.ContainerRequests = append(requests.ContainerRequests, &containerRequests)
 		ctx := context.Background()

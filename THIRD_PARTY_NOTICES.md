@@ -38,7 +38,7 @@ Corresponding source for the application-layer components is published in the
 tagged NVIDIA repository source archive: vendored Go source under `vendor/`,
 the application source, and `utils/pci.ids`.
 
-The release-specific source archive is `https://github.com/NVIDIA/kubevirt-gpu-device-plugin/archive/refs/tags/v1.5.1.tar.gz`.
+The release-specific source archive is `https://github.com/NVIDIA/kubevirt-gpu-device-plugin/archive/refs/tags/v1.6.0.tar.gz`.
 
 This notice is also copied into the image at
 `/licenses/THIRD_PARTY_NOTICES.md` and attached byte-for-byte to
@@ -54,7 +54,6 @@ notices-check` to verify the committed copy.
 | `github.com/NVIDIA/gpu-monitoring-tools` | Apache-2.0 | runtime graph |
 | `github.com/fsnotify/fsnotify` | BSD-3-Clause | runtime graph |
 | `github.com/go-logr/logr` | Apache-2.0 | runtime graph |
-| `github.com/gogo/protobuf` | BSD-3-Clause | runtime graph |
 | `go.yaml.in/yaml/v3` | Apache-2.0 AND MIT | OSRB/nSpect reviewed supplement |
 | `golang.org/x/net` | BSD-3-Clause | runtime graph |
 | `golang.org/x/sys` | BSD-3-Clause | runtime graph |
@@ -546,74 +545,6 @@ Copyright 2023 The logr Authors.
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
-
-```
-
-### github.com/gogo/protobuf
-
-* License(s): BSD-3-Clause
-* Inventory basis: runtime graph
-* Bundled source: `vendor/github.com/gogo/protobuf`
-
-#### AUTHORS
-
-```text
-# This is the official list of GoGo authors for copyright purposes.
-# This file is distinct from the CONTRIBUTORS file, which
-# lists people.  For example, employees are listed in CONTRIBUTORS,
-# but not in AUTHORS, because the employer holds the copyright.
-
-# Names should be added to this file as one of
-#     Organization's name
-#     Individual's name <submission email address>
-#     Individual's name <submission email address> <email2> <emailN>
-
-# Please keep the list sorted.
-
-Sendgrid, Inc
-Vastech SA (PTY) LTD
-Walter Schulze <awalterschulze@gmail.com>
-
-```
-
-#### LICENSE
-
-```text
-Copyright (c) 2013, The GoGo Authors. All rights reserved.
-
-Protocol Buffers for Go with Gadgets
-
-Go support for Protocol Buffers - Google's data interchange format
-
-Copyright 2010 The Go Authors.  All rights reserved.
-https://github.com/golang/protobuf
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are
-met:
-
-    * Redistributions of source code must retain the above copyright
-notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above
-copyright notice, this list of conditions and the following disclaimer
-in the documentation and/or other materials provided with the
-distribution.
-    * Neither the name of Google Inc. nor the names of its
-contributors may be used to endorse or promote products derived from
-this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 
 ```
 
@@ -1871,7 +1802,7 @@ Copyright The Kubernetes Authors.
 * Version: `2025.07.11`
 * Chosen license: BSD-3-Clause
 * SHA-256: `a96cd22db83c10d9141ecd7b14325ed9c936de5ef01d78e7e7e43f070184270b`
-* Source location: https://github.com/NVIDIA/kubevirt-gpu-device-plugin/blob/v1.5.1/utils/pci.ids
+* Source location: https://github.com/NVIDIA/kubevirt-gpu-device-plugin/blob/v1.6.0/utils/pci.ids
 * Original source: PCI ID Project (https://pci-ids.ucw.cz/)
 * Copyright holders: Martin Mares and Albert Pool
 
