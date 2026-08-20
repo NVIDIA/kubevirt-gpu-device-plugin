@@ -49,28 +49,27 @@ notices-check` to verify the committed copy.
 
 ## Component Index
 
-| Component | Version | License(s) | Inventory basis |
-|-----------|---------|------------|-----------------|
-| `github.com/NVIDIA/gpu-monitoring-tools` | `v0.0.0-20211102125545-5a2c58442e48` | Apache-2.0 | runtime graph |
-| `github.com/fsnotify/fsnotify` | `v1.9.0` | BSD-3-Clause | runtime graph |
-| `github.com/go-logr/logr` | `v1.4.3` | Apache-2.0 | runtime graph |
-| `github.com/gogo/protobuf` | `v1.3.2` | BSD-3-Clause | runtime graph |
-| `go.yaml.in/yaml/v3` | `v3.0.4` | Apache-2.0 AND MIT | OSRB/nSpect reviewed supplement |
-| `golang.org/x/net` | `v0.58.0` | BSD-3-Clause | runtime graph |
-| `golang.org/x/sys` | `v0.47.0` | BSD-3-Clause | runtime graph |
-| `golang.org/x/text` | `v0.41.0` | BSD-3-Clause | runtime graph |
-| `google.golang.org/genproto/googleapis/rpc` | `v0.0.0-20260414002931-afd174a4e478` | Apache-2.0 | runtime graph |
-| `google.golang.org/grpc` | `v1.82.1` | Apache-2.0 | runtime graph |
-| `google.golang.org/protobuf` | `v1.36.11` | BSD-3-Clause | runtime graph |
-| `k8s.io/klog/v2` | `v2.140.0` | Apache-2.0 | runtime graph |
-| `k8s.io/kubelet` | `v0.33.5` | Apache-2.0 | runtime graph |
-| `pci.ids` | `2025.07.11` | BSD-3-Clause (selected from GPL-2.0-or-later OR BSD-3-Clause) | shipped data file |
+| Component | License(s) | Inventory basis |
+|-----------|------------|-----------------|
+| `github.com/NVIDIA/gpu-monitoring-tools` | Apache-2.0 | runtime graph |
+| `github.com/fsnotify/fsnotify` | BSD-3-Clause | runtime graph |
+| `github.com/go-logr/logr` | Apache-2.0 | runtime graph |
+| `github.com/gogo/protobuf` | BSD-3-Clause | runtime graph |
+| `go.yaml.in/yaml/v3` | Apache-2.0 AND MIT | OSRB/nSpect reviewed supplement |
+| `golang.org/x/net` | BSD-3-Clause | runtime graph |
+| `golang.org/x/sys` | BSD-3-Clause | runtime graph |
+| `golang.org/x/text` | BSD-3-Clause | runtime graph |
+| `google.golang.org/genproto/googleapis/rpc` | Apache-2.0 | runtime graph |
+| `google.golang.org/grpc` | Apache-2.0 | runtime graph |
+| `google.golang.org/protobuf` | BSD-3-Clause | runtime graph |
+| `k8s.io/klog/v2` | Apache-2.0 | runtime graph |
+| `k8s.io/kubelet` | Apache-2.0 | runtime graph |
+| `pci.ids` | BSD-3-Clause (selected from GPL-2.0-or-later OR BSD-3-Clause) | shipped data file |
 
 ## Go Component License and Notice Texts
 
 ### github.com/NVIDIA/gpu-monitoring-tools
 
-* Version: `v0.0.0-20211102125545-5a2c58442e48`
 * License(s): Apache-2.0
 * Inventory basis: runtime graph
 * Bundled source: `vendor/github.com/NVIDIA/gpu-monitoring-tools`
@@ -294,7 +293,6 @@ Copyright 1993-2020 NVIDIA Corporation.  All rights reserved.
 
 ### github.com/fsnotify/fsnotify
 
-* Version: `v1.9.0`
 * License(s): BSD-3-Clause
 * Inventory basis: runtime graph
 * Bundled source: `vendor/github.com/fsnotify/fsnotify`
@@ -332,7 +330,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### github.com/go-logr/logr
 
-* Version: `v1.4.3`
 * License(s): Apache-2.0
 * Inventory basis: runtime graph
 * Bundled source: `vendor/github.com/go-logr/logr`
@@ -554,7 +551,6 @@ Copyright 2023 The logr Authors.
 
 ### github.com/gogo/protobuf
 
-* Version: `v1.3.2`
 * License(s): BSD-3-Clause
 * Inventory basis: runtime graph
 * Bundled source: `vendor/github.com/gogo/protobuf`
@@ -623,7 +619,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### go.yaml.in/yaml/v3
 
-* Version: `v3.0.4`
 * License(s): Apache-2.0 AND MIT
 * Inventory basis: OSRB/nSpect reviewed supplement
 * Bundled source: `vendor/go.yaml.in/yaml/v3`
@@ -705,7 +700,6 @@ limitations under the License.
 
 ### golang.org/x/net
 
-* Version: `v0.58.0`
 * License(s): BSD-3-Clause
 * Inventory basis: runtime graph
 * Bundled source: `vendor/golang.org/x/net`
@@ -773,7 +767,6 @@ shall terminate as of the date such litigation is filed.
 
 ### golang.org/x/sys
 
-* Version: `v0.47.0`
 * License(s): BSD-3-Clause
 * Inventory basis: runtime graph
 * Bundled source: `vendor/golang.org/x/sys`
@@ -841,7 +834,6 @@ shall terminate as of the date such litigation is filed.
 
 ### golang.org/x/text
 
-* Version: `v0.41.0`
 * License(s): BSD-3-Clause
 * Inventory basis: runtime graph
 * Bundled source: `vendor/golang.org/x/text`
@@ -909,7 +901,6 @@ shall terminate as of the date such litigation is filed.
 
 ### google.golang.org/genproto/googleapis/rpc
 
-* Version: `v0.0.0-20260414002931-afd174a4e478`
 * License(s): Apache-2.0
 * Inventory basis: runtime graph
 * Bundled source: `vendor/google.golang.org/genproto/googleapis/rpc`
@@ -1130,7 +1121,6 @@ Copyright 2026 Google LLC
 
 ### google.golang.org/grpc
 
-* Version: `v1.82.1`
 * License(s): Apache-2.0
 * Inventory basis: runtime graph
 * Bundled source: `vendor/google.golang.org/grpc`
@@ -1371,7 +1361,6 @@ limitations under the License.
 
 ### google.golang.org/protobuf
 
-* Version: `v1.36.11`
 * License(s): BSD-3-Clause
 * Inventory basis: runtime graph
 * Bundled source: `vendor/google.golang.org/protobuf`
@@ -1439,7 +1428,6 @@ shall terminate as of the date such litigation is filed.
 
 ### k8s.io/klog/v2
 
-* Version: `v2.140.0`
 * License(s): Apache-2.0
 * Inventory basis: runtime graph
 * Bundled source: `vendor/k8s.io/klog/v2`
@@ -1653,7 +1641,6 @@ third-party archives.
 
 ### k8s.io/kubelet
 
-* Version: `v0.33.5`
 * License(s): Apache-2.0
 * Inventory basis: runtime graph
 * Bundled source: `vendor/k8s.io/kubelet`
