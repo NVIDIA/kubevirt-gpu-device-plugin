@@ -27,12 +27,12 @@ classification is `Apache-2.0 AND MIT`, and both the upstream `LICENSE` and
 `pci.ids` is a shipped data file that Go dependency tooling cannot detect. Its
 reviewed metadata and the selected BSD-3-Clause license are included manually.
 
-The runtime base `nvcr.io/nvidia/distroless/go:v4.0.2` is not expanded into
+The runtime base `nvcr.io/nvidia/distroless/go:v4.1.1` is not expanded into
 this inventory. Its notice and source obligations are handled by NVIDIA's
 base-image compliance process and must not be duplicated here unless that
 process determines otherwise.
 
-The corresponding base-image source index is `https://developer.download.nvidia.com/distroless-oss/go/v4.0.2/index.html`.
+The corresponding base-image source index is `https://developer.download.nvidia.com/distroless-oss/go/v4.1.1/index.html`.
 
 Corresponding source for the application-layer components is published in the
 tagged NVIDIA repository source archive: vendored Go source under `vendor/`,

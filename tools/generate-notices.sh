@@ -31,9 +31,9 @@ PCI_IDS_FILE="${PCI_IDS_FILE:-utils/pci.ids}"
 VERSIONS_MK="${VERSIONS_MK:-versions.mk}"
 COPYRIGHTS_TSV="${COPYRIGHTS_TSV:-tools/notices/copyrights.tsv}"
 RUNTIME_FILES_TEMPLATE="${RUNTIME_FILES_TEMPLATE:-tools/notices/runtime-files.gotmpl}"
+DISTROLESS_DOCKERFILE="${DISTROLESS_DOCKERFILE:-deployments/container/Dockerfile.distroless}"
 
 SOURCE_REPOSITORY="https://github.com/NVIDIA/kubevirt-gpu-device-plugin"
-BASE_SOURCE_URL="https://developer.download.nvidia.com/distroless-oss/go/v4.0.2/index.html"
 
 PACKAGES=("./cmd")
 PLATFORMS=(
@@ -98,7 +98,8 @@ check_prerequisites() {
         "${PCI_IDS_FILE}" \
         "${VERSIONS_MK}" \
         "${COPYRIGHTS_TSV}" \
-        "${RUNTIME_FILES_TEMPLATE}"; do
+        "${RUNTIME_FILES_TEMPLATE}" \
+        "${DISTROLESS_DOCKERFILE}"; do
         [[ -f "${file}" ]] || die "${file} not found; run this command from the repository root."
     done
 
@@ -113,6 +114,21 @@ resolve_release_metadata() {
 
     APP_SOURCE_URL="${SOURCE_REPOSITORY}/archive/refs/tags/${RELEASE_VERSION}.tar.gz"
     PCI_SOURCE_URL="${SOURCE_REPOSITORY}/blob/${RELEASE_VERSION}/utils/pci.ids"
+}
+
+resolve_base_image() {
+    # The final stage determines the shipped runtime image, not the builder.
+    BASE_IMAGE=$(awk '
+        toupper($1) == "FROM" {
+            field = ($2 ~ /^--platform=/) ? 3 : 2
+            image = $field
+        }
+        END { print image }
+    ' "${DISTROLESS_DOCKERFILE}")
+    local image_pattern='^nvcr\.io/nvidia/distroless/go:(v[0-9]+\.[0-9]+\.[0-9]+)(@sha256:[0-9a-f]{64})?$'
+    [[ "${BASE_IMAGE}" =~ ${image_pattern} ]] || die \
+        "expected a literal, version-tagged NVIDIA distroless Go runtime image in the final FROM of ${DISTROLESS_DOCKERFILE}."
+    BASE_SOURCE_URL="https://developer.download.nvidia.com/distroless-oss/go/${BASH_REMATCH[1]}/index.html"
 }
 
 verify_platform_matrix() {
@@ -576,7 +592,9 @@ classification is `Apache-2.0 AND MIT`, and both the upstream `LICENSE` and
 `pci.ids` is a shipped data file that Go dependency tooling cannot detect. Its
 reviewed metadata and the selected BSD-3-Clause license are included manually.
 
-The runtime base `nvcr.io/nvidia/distroless/go:v4.0.2` is not expanded into
+EOF
+        printf 'The runtime base `%s` is not expanded into\n' "${BASE_IMAGE}"
+        cat <<'EOF'
 this inventory. Its notice and source obligations are handled by NVIDIA's
 base-image compliance process and must not be duplicated here unless that
 process determines otherwise.
@@ -619,6 +637,7 @@ EOF
 main() {
     check_prerequisites
     resolve_release_metadata
+    resolve_base_image
     verify_platform_matrix
     verify_pci_ids
     prepare_workspace
