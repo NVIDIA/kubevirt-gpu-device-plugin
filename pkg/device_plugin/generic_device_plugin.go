@@ -359,7 +359,6 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 	log.Printf("[%s] This means kubelet passed Topology Manager admission!", dpi.deviceName)
 
 	responses := pluginapi.AllocateResponse{}
-	envList := map[string][]string{}
 	iommufdSupported, err := supportsIOMMUFD()
 	if err != nil {
 		return nil, fmt.Errorf("could not determine iommufd support: %w", err)
@@ -372,6 +371,9 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 	for _, req := range reqs.ContainerRequests {
 		deviceSpecs := make([]*pluginapi.DeviceSpec, 0)
 		seenDeviceSpecs := make(map[string]struct{})
+		// Scoped to the container: a response must advertise only the devices
+		// requested for its own container.
+		envList := map[string][]string{}
 		returnedMap := returnIommuMap()
 		bdfToIommu := returnBdfToIommuMap()
 		for _, bdf := range req.DevicesIds {

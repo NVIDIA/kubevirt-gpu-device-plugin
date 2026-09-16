@@ -298,6 +298,39 @@ var _ = Describe("Generic Device", func() {
 		Expect(responses.GetContainerResponses()[0].Envs[envKey]).To(Equal(gpuAddr))
 	})
 
+	It("Should not expose one container's devices to another container in the same request", func() {
+		// AllocateRequest.ContainerRequests is a repeated field. Each response
+		// must describe only the devices requested in its own entry; state
+		// carried across the loop would name hardware from a different entry.
+		readIDFromFile = func(basePath, deviceAddress, link string) (string, error) {
+			return nvVendorID, nil // both requested addresses are NVIDIA (10de)
+		}
+		envKey := gpuPrefix + "_FOO"
+		requests := pluginapi.AllocateRequest{}
+		requests.ContainerRequests = append(requests.ContainerRequests,
+			&pluginapi.ContainerAllocateRequest{DevicesIds: []string{pciAddress1}},
+			&pluginapi.ContainerAllocateRequest{DevicesIds: []string{pciAddress2}})
+		responses, err := dpi.Allocate(context.Background(), &requests)
+		Expect(err).To(BeNil())
+		Expect(responses.GetContainerResponses()).To(HaveLen(2))
+		Expect(responses.GetContainerResponses()[0].Envs[envKey]).To(Equal(pciAddress1))
+		Expect(responses.GetContainerResponses()[1].Envs[envKey]).To(Equal(pciAddress2))
+
+		// The device nodes must be isolated per entry too, so that hoisting any
+		// other per-container state out of the loop is caught here as well.
+		hostPaths := func(specs []*pluginapi.DeviceSpec) []string {
+			paths := []string{}
+			for _, spec := range specs {
+				paths = append(paths, spec.HostPath)
+			}
+			return paths
+		}
+		Expect(hostPaths(responses.GetContainerResponses()[0].Devices)).To(
+			And(ContainElement("/dev/vfio/"+iommuGroup1), Not(ContainElement("/dev/vfio/"+iommuGroup2))))
+		Expect(hostPaths(responses.GetContainerResponses()[1].Devices)).To(
+			And(ContainElement("/dev/vfio/"+iommuGroup2), Not(ContainElement("/dev/vfio/"+iommuGroup1))))
+	})
+
 	It("Should allocate a device without error with iommufd support", func() {
 		Expect(os.MkdirAll(filepath.Join(workDir, "dev"), 0744)).To(Succeed())
 		f, err := os.OpenFile(filepath.Join(workDir, "dev", "iommu"), os.O_RDONLY|os.O_CREATE, 0666)
