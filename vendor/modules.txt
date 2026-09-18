@@ -1,6 +1,10 @@
 # github.com/Masterminds/semver/v3 v3.4.0
 ## explicit; go 1.21
 github.com/Masterminds/semver/v3
+# github.com/NVIDIA/go-nvml v0.13.0-1
+## explicit; go 1.20
+github.com/NVIDIA/go-nvml/pkg/dl
+github.com/NVIDIA/go-nvml/pkg/nvml
 # github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48
 ## explicit; go 1.14
 github.com/NVIDIA/gpu-monitoring-tools/bindings/go/nvml
