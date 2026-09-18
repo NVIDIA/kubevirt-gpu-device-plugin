@@ -1,4 +1,12 @@
 # module	compiled source file (relative to module root)	exact upstream copyright notice
+github.com/NVIDIA/go-nvml	pkg/dl/dl.go	Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+github.com/NVIDIA/go-nvml	pkg/dl/dl_linux.go	Copyright (c) NVIDIA CORPORATION.  All rights reserved.
+github.com/NVIDIA/go-nvml	pkg/nvml/api.go	Copyright 2023 NVIDIA CORPORATION
+github.com/NVIDIA/go-nvml	pkg/nvml/cgo_helpers.h	Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
+github.com/NVIDIA/go-nvml	pkg/nvml/const_static.go	Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+github.com/NVIDIA/go-nvml	pkg/nvml/gpm.go	Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
+github.com/NVIDIA/go-nvml	pkg/nvml/nvml.h	Copyright 1993-2025 NVIDIA Corporation.  All rights reserved.
+github.com/NVIDIA/go-nvml	pkg/nvml/refcount.go	Copyright 2024 NVIDIA CORPORATION
 github.com/NVIDIA/gpu-monitoring-tools	bindings/go/nvml/nvml.go	Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
 github.com/NVIDIA/gpu-monitoring-tools	bindings/go/nvml/mig.go	Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
 github.com/NVIDIA/gpu-monitoring-tools	bindings/go/nvml/bindings.go	Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.

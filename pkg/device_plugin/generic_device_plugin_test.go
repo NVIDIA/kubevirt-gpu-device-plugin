@@ -358,6 +358,81 @@ var _ = Describe("Generic Device", func() {
 		Expect(responses).To(BeNil())
 	})
 
+	It("Should activate the fabric partition once per request with the whole VF set", func() {
+		// Activation is per container request, NOT per device: a multi-card VM
+		// must reach Fabric Manager as ONE set so it gets the single multi-GPU
+		// partition spanning its cards. Activating per device would instead
+		// bring up each card's own single-GPU partition -- working CUDA per
+		// card, but no cross-card NVLink peer-to-peer.
+		readIDFromFile = getFakeIDFromFileForSharedEGM // both cards are NVIDIA
+		orig := activateFabricForVFs
+		defer func() { activateFabricForVFs = orig }()
+		var calls [][]string
+		activateFabricForVFs = func(vfBDFs []string) error {
+			calls = append(calls, append([]string(nil), vfBDFs...))
+			return nil
+		}
+		// Two container requests (two VMs) in one Allocate: each must be
+		// activated separately with its OWN device set. Merging them into a
+		// single call would hand Fabric Manager a set spanning both VMs, which
+		// either matches an unrelated partition or fails the whole Allocate.
+		requests := pluginapi.AllocateRequest{}
+		requests.ContainerRequests = append(requests.ContainerRequests,
+			&pluginapi.ContainerAllocateRequest{DevicesIds: []string{pciAddress1, pciAddress2}},
+			&pluginapi.ContainerAllocateRequest{DevicesIds: []string{pciAddress2}})
+		_, err := dpi.Allocate(context.Background(), &requests)
+		Expect(err).To(BeNil())
+		Expect(calls).To(HaveLen(2))
+		Expect(calls[0]).To(Equal([]string{pciAddress1, pciAddress2}))
+		Expect(calls[1]).To(Equal([]string{pciAddress2}))
+	})
+
+	It("Should fail the allocation when fabric partition activation fails", func() {
+		readIDFromFile = getFakeIDFromFileForSharedEGM // both cards are NVIDIA
+		orig := activateFabricForVFs
+		defer func() { activateFabricForVFs = orig }()
+		activateFabricForVFs = func(vfBDFs []string) error {
+			return errors.New("no partition spans the requested cards")
+		}
+		requests := pluginapi.AllocateRequest{}
+		requests.ContainerRequests = append(requests.ContainerRequests,
+			&pluginapi.ContainerAllocateRequest{DevicesIds: []string{pciAddress1, pciAddress2}})
+		responses, err := dpi.Allocate(context.Background(), &requests)
+		Expect(err).ToNot(BeNil())
+		Expect(responses).To(BeNil())
+	})
+
+	It("Should prefer a fabric-partition-aligned set when one is available", func() {
+		orig := preferredFabricVFSet
+		defer func() { preferredFabricVFSet = orig }()
+		preferredFabricVFSet = func(available, mustInclude []string, size int) ([]string, bool) {
+			if size == 2 {
+				return []string{pciAddress1, pciAddress2}, true
+			}
+			return nil, false
+		}
+		req := &pluginapi.PreferredAllocationRequest{
+			ContainerRequests: []*pluginapi.ContainerPreferredAllocationRequest{
+				{AvailableDeviceIDs: []string{pciAddress1, pciAddress2, pciAddress3}, AllocationSize: 2},
+			},
+		}
+		resp, err := dpi.GetPreferredAllocation(context.Background(), req)
+		Expect(err).To(BeNil())
+		Expect(resp.ContainerResponses[0].DeviceIDs).To(Equal([]string{pciAddress1, pciAddress2}))
+	})
+
+	It("Should fall back to the NUMA preference when no fabric-aligned set is offered", func() {
+		// The default seam declines, so the existing NUMA-affinity path runs.
+		req := &pluginapi.PreferredAllocationRequest{
+			ContainerRequests: []*pluginapi.ContainerPreferredAllocationRequest{
+				{AvailableDeviceIDs: []string{pciAddress1}, AllocationSize: 1},
+			},
+		}
+		resp, err := dpi.GetPreferredAllocation(context.Background(), req)
+		Expect(err).To(BeNil())
+		Expect(resp.ContainerResponses[0].DeviceIDs).To(Equal([]string{pciAddress1}))
+	})
+
 	It("Should monitor health of device node", func() {
 		go dpi.healthCheck()
 		Expect(dpi.devs[0].Health).To(Equal(pluginapi.Healthy))
