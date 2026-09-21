@@ -9,6 +9,8 @@ GPUAliases:
     alias: H100
   - GPUName: GH100_H100L_94GB
     alias: H100
+  - GPUName: GH100_H200_NVL
+    alias: H200
   - GPUName: GA102GL_RTX_A6000
     alias: RTXA6000
   - GPUName: AD104GL_L4
