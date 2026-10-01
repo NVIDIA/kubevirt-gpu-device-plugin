@@ -106,7 +106,7 @@ func getFakeLink(basePath string, deviceAddress string, link string) (string, er
 	}
 }
 
-func getFakeIDFromFile(basePath string, deviceAddress string, link string) (string, error) {
+func getFakeHexIDFromFile(basePath string, deviceAddress string, link string) (string, error) {
 	if deviceAddress == pciAddress1 {
 		return nvVendorID, nil
 	}
@@ -114,7 +114,7 @@ func getFakeIDFromFile(basePath string, deviceAddress string, link string) (stri
 
 }
 
-func getFakeIDFromFileForSharedEGM(basePath string, deviceAddress string, link string) (string, error) {
+func getFakeHexIDFromFileForSharedEGM(basePath string, deviceAddress string, link string) (string, error) {
 	if deviceAddress == pciAddress1 || deviceAddress == pciAddress2 {
 		return nvVendorID, nil
 	}
@@ -133,7 +133,7 @@ var _ = Describe("Generic Device", func() {
 		returnIommuMap = getFakeIommuMap
 		returnBdfToIommuMap = getFakeBdfToIommuMap
 		readLink = getFakeLink
-		readIDFromFile = getFakeIDFromFile
+		readHexIDFromFile = getFakeHexIDFromFile
 		discoverEGMDevices = getFakeEGMDevices
 		var devs []*pluginapi.Device
 		workDir, err = os.MkdirTemp("", "kubevirt-test")
@@ -196,7 +196,7 @@ var _ = Describe("Generic Device", func() {
 	})
 
 	It("Should inject EGM device when all associated GPUs are allocated", func() {
-		readIDFromFile = getFakeIDFromFileForSharedEGM
+		readHexIDFromFile = getFakeHexIDFromFileForSharedEGM
 		discoverEGMDevices = getFakeSharedEGMDevices
 		devs := []string{pciAddress1, pciAddress2}
 		envKey := gpuPrefix + "_FOO"
@@ -233,7 +233,7 @@ var _ = Describe("Generic Device", func() {
 	})
 
 	It("Should inject only the matching EGM device on a multi-socket system", func() {
-		readIDFromFile = getFakeIDFromFileForSharedEGM
+		readHexIDFromFile = getFakeHexIDFromFileForSharedEGM
 		discoverEGMDevices = getFakeMultiSocketEGMDevices
 		devs := []string{pciAddress1, pciAddress2}
 		containerRequests := pluginapi.ContainerAllocateRequest{DevicesIds: devs}
@@ -284,7 +284,7 @@ var _ = Describe("Generic Device", func() {
 			return map[string]string{gpuAddr: grp, audioAddr: grp}
 		}
 		readLink = func(basePath, deviceAddress, link string) (string, error) { return grp, nil }
-		readIDFromFile = func(basePath, deviceAddress, link string) (string, error) {
+		readHexIDFromFile = func(basePath, deviceAddress, link string) (string, error) {
 			return nvVendorID, nil // both functions are NVIDIA (10de)
 		}
 

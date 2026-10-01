@@ -391,7 +391,7 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 					log.Println("IommuGroup has changed on the system ", dev.addr)
 					return nil, fmt.Errorf("invalid allocation request: unknown device: %s", dev.addr)
 				}
-				vendorID, err := readIDFromFile(basePath, dev.addr, "vendor")
+				vendorID, err := readHexIDFromFile(basePath, dev.addr, "vendor")
 				if err != nil || vendorID != nvidiaVendorID {
 					log.Println("Vendor has changed on the system ", dev.addr)
 					return nil, fmt.Errorf("invalid allocation request: unknown device: %s", dev.addr)

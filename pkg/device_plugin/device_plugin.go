@@ -78,7 +78,7 @@ var supportedVfioDrivers = map[string]struct{}{
 }
 var pciIdsFilePath = "/usr/pci.ids"
 var readLink = readLinkFunc
-var readIDFromFile = readIDFromFileFunc
+var readHexIDFromFile = readHexIDFromFileFunc
 var readNUMANode = readNUMANodeFunc
 var startDevicePlugin = startDevicePluginFunc
 var readVgpuIDFromFile = readVgpuIDFromFileFunc
@@ -199,7 +199,7 @@ func createIommuDeviceMap() {
 			return nil
 		}
 		//Retrieve vendor for the device
-		vendorID, err := readIDFromFile(basePath, info.Name(), "vendor")
+		vendorID, err := readHexIDFromFile(basePath, info.Name(), "vendor")
 		if err != nil {
 			log.Println("Could not get vendor ID for device ", info.Name())
 			return nil
@@ -231,7 +231,7 @@ func createIommuDeviceMap() {
 			log.Println("Iommu Group " + iommuGroup)
 			// Always record this PCI device (BDF) under its device ID so we
 			// advertise actual PCI BDFs to kubelet and provide NUMA topology.
-			deviceID, err := readIDFromFile(basePath, info.Name(), "device")
+			deviceID, err := readHexIDFromFile(basePath, info.Name(), "device")
 			if err != nil {
 				log.Println("Could get deviceID for PCI address ", info.Name())
 				return nil
@@ -290,15 +290,29 @@ func createVgpuIDMap() {
 	})
 }
 
-// Read a file to retrieve ID
-func readIDFromFileFunc(basePath string, deviceAddress string, property string) (string, error) {
+// Read a file to retrieve hex property without leading prefix.
+func readHexIDFromFileFunc(basePath string, deviceAddress string, property string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(basePath, deviceAddress, property))
 	if err != nil {
 		klog.Errorf("Could not read %s for device %s: %s", property, deviceAddress, err)
 		return "", err
 	}
-	id := strings.Trim(string(data[2:]), "\n")
-	return id, nil
+	id := strings.Trim(string(data), "\n")
+	// Value should have the hexadecimal prefix `0x`.
+	if !(strings.HasPrefix(strings.ToLower(id), "0x")) {
+		err := fmt.Errorf("value %q does not have a hexadecimal prefix", id)
+		klog.Errorf("Property %s (value: %q) for device %s is not a hex string", property, id, deviceAddress)
+		return "", err
+	}
+
+	// Parse as a hexadecimal number.
+	parsed, err := strconv.ParseUint(id[2:], 16, 64)
+	if err != nil {
+		klog.Errorf("Property %s (value: %q) for device %s is not a hex string: %s", property, id, deviceAddress, err)
+		return "", err
+	}
+
+	return fmt.Sprintf("%x", parsed), nil
 }
 
 func readNUMANodeFunc(basePath string, deviceAddress string) (int64, error) {

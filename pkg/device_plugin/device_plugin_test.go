@@ -78,7 +78,7 @@ func getFakeLinkDevicePlugin(basePath string, deviceAddress string, link string)
 	return "", errors.New("Incorrect operation")
 }
 
-func getFakeIDFromFileDevicePlugin(basePath string, deviceAddress string, link string) (string, error) {
+func getFakeHexIDFromFileDevicePlugin(basePath string, deviceAddress string, link string) (string, error) {
 	if deviceAddress == deviceAddress1 || deviceAddress == deviceAddress4 || deviceAddress == deviceAddress5 {
 		if link == "vendor" {
 			return nvVendorID, nil
@@ -171,18 +171,35 @@ var _ = Describe("Device Plugin", func() {
 			Expect(err).ToNot(HaveOccurred())
 			err = os.Mkdir(workDir+"/1", 0755)
 			Expect(err).ToNot(HaveOccurred())
-			err = os.WriteFile(filepath.Join(workDir, deviceAddress1, "vendor"), []byte("0x10de"), 0644)
-			Expect(err).ToNot(HaveOccurred())
 		})
 
-		It("Read driver with out error", func() {
-			driverID, err := readIDFromFileFunc(workDir, deviceAddress1, "vendor")
-			Expect(err).To(BeNil())
-			Expect(driverID).To(Equal(nvVendorID))
-		})
+		DescribeTable("parses hex property value in sysfs",
+			func(contents, expectedID string, expectError bool) {
+				err = os.WriteFile(filepath.Join(workDir, deviceAddress1, "vendor"), []byte(contents), 0644)
+				Expect(err).ToNot(HaveOccurred())
+
+				id, err := readHexIDFromFileFunc(workDir, deviceAddress1, "vendor")
+				if expectError {
+					Expect(err).To(HaveOccurred())
+					Expect(id).To(BeEmpty())
+					return
+				}
+
+				Expect(err).ToNot(HaveOccurred())
+				Expect(id).To(Equal(expectedID))
+			},
+			Entry("reads a standard property value", "0x10de", nvVendorID, false),
+			Entry("trims a trailing newline", "0x1b80\n", "1b80", false),
+			Entry("normalizes uppercase hex and leading zeroes", "0X001B80\n", "1b80", false),
+			Entry("rejects a decimal value", "1234\n", "", true),
+			Entry("rejects input shorter than a hex prefix", "0", "", true),
+			Entry("rejects a prefix without digits", "0x", "", true),
+			Entry("rejects non-hex contents", "not-hex\n", "", true),
+			Entry("rejects an empty file", "", "", true),
+		)
 
 		It("Read driver from a missing location to throw error", func() {
-			driverID, err := readIDFromFileFunc(workDir, deviceAddress1, "iommu_group")
+			driverID, err := readHexIDFromFileFunc(workDir, deviceAddress1, "iommu_group")
 			Expect(err).ShouldNot(BeNil())
 			Expect(driverID).To(Equal(""))
 		})
@@ -303,7 +320,7 @@ var _ = Describe("Device Plugin", func() {
 
 		It("", func() {
 			readLink = getFakeLinkDevicePlugin
-			readIDFromFile = getFakeIDFromFileDevicePlugin
+			readHexIDFromFile = getFakeHexIDFromFileDevicePlugin
 			startDevicePlugin = fakeStartDevicePluginFunc
 			createIommuDeviceMap()
 
