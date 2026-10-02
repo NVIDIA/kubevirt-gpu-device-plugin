@@ -476,6 +476,9 @@ module_source_base() {
     fi
 
     case "${module}" in
+        github.com/NVIDIA/go-nvml)
+            printf 'https://github.com/NVIDIA/go-nvml/blob/%s/' "${version}"
+            ;;
         github.com/NVIDIA/gpu-monitoring-tools)
             printf 'https://github.com/NVIDIA/gpu-monitoring-tools/blob/%s/' "${revision}"
             ;;

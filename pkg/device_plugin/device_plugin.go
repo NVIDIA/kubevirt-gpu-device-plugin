@@ -89,8 +89,11 @@ var stop = make(chan struct{})
 func InitiateDevicePlugin() {
 	//Identifies GPUs and represents it in appropriate structures
 	createIommuDeviceMap()
-	//Identifies vGPUs and represents it in appropriate structures
+	//Identifies mdev-backed vGPUs and represents it in appropriate structures
 	createVgpuIDMap()
+	//Identifies vGPUs exposed through the vendor-specific VFIO framework
+	//(Ada/Hopper+ GPUs, which do not support mdev)
+	createVfioVGpuMap()
 	//Creates and starts device plugin
 	createDevicePlugins()
 }
@@ -104,6 +107,7 @@ func createDevicePlugins() {
 	log.Printf("Device Map %v", deviceMap)
 	log.Println("vGPU Map ", vGpuMap)
 	log.Println("GPU vGPU Map ", gpuVgpuMap)
+	log.Println("VFIO vGPU Map ", vfioVGpuMap)
 
 	//Iterate over deivceMap to create device plugin for each type of GPU on the host
 	for k, gpuDevices := range deviceMap {
@@ -160,6 +164,33 @@ func createDevicePlugins() {
 			log.Printf("Error starting %s device plugin: %v", dp.deviceName, err)
 		} else {
 			vGpuDevicePlugins = append(vGpuDevicePlugins, dp)
+		}
+	}
+	//Iterate over vfioVGpuMap to create a device plugin for each vGPU profile
+	//exposed through the vendor-specific VFIO framework. These devices are
+	//grouped by profile name (unlike deviceMap, which groups by raw PCI
+	//device id) but otherwise use the same PCI-passthrough-style contract as
+	//deviceMap, since vendor-VFIO VFs are ordinary PCI/IOMMU-group devices.
+	for k, gpuDevices := range vfioVGpuMap {
+		devs = nil
+		for _, gpuDev := range gpuDevices {
+			devs = append(devs, &pluginapi.Device{
+				ID:     gpuDev.addr,
+				Health: pluginapi.Healthy,
+				Topology: &pluginapi.TopologyInfo{
+					Nodes: []*pluginapi.NUMANode{
+						{ID: gpuDev.numaNode},
+					},
+				},
+			})
+		}
+		log.Printf("DP Name %s", k)
+		dp := NewGenericDevicePlugin(k, "/dev/vfio/", devs)
+		err := startDevicePlugin(dp)
+		if err != nil {
+			log.Printf("Error starting %s device plugin: %v", dp.deviceName, err)
+		} else {
+			devicePlugins = append(devicePlugins, dp)
 		}
 	}
 
