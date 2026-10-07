@@ -40,6 +40,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -71,15 +72,20 @@ var discoverEGMDevices = discoverEGMDevicesFunc
 // Implements the kubernetes device plugin API
 type GenericDevicePlugin struct {
 	pluginapi.UnimplementedDevicePluginServer
-	devs       []*pluginapi.Device
-	server     *grpc.Server
-	socketPath string
-	stop       chan struct{} // this channel signals to stop the DP
-	term       chan bool     // this channel detects kubelet restarts
-	healthy    chan string
-	unhealthy  chan string
-	devicePath string
-	deviceName string
+	devs        []*pluginapi.Device
+	devsMu      sync.RWMutex  // guards devs and each device's Health field
+	refresh     chan struct{} // buffered(1): asks ListAndWatch to re-advertise the current device list
+	rewatch     chan struct{} // buffered(1): asks healthCheck to add watches for newly added devices
+	lifecycleMu sync.Mutex    // serializes Start/Stop so concurrent callers cannot race the server field or double-close done
+	server      *grpc.Server
+	socketPath  string
+	stop        chan struct{} // this channel signals to stop the DP (whole-process shutdown, shared)
+	done        chan struct{} // closed by Stop() to terminate this one plugin's goroutines
+	term        chan bool     // this channel detects kubelet restarts
+	healthy     chan string
+	unhealthy   chan string
+	devicePath  string
+	deviceName  string
 }
 
 // Returns an initialized instance of GenericDevicePlugin
@@ -88,7 +94,10 @@ func NewGenericDevicePlugin(deviceName string, devicePath string, devices []*plu
 	serverSock := fmt.Sprintf(pluginapi.DevicePluginPath+"kubevirt-%s.sock", deviceName)
 	dpi := &GenericDevicePlugin{
 		devs:       devices,
+		refresh:    make(chan struct{}, 1),
+		rewatch:    make(chan struct{}, 1),
 		socketPath: serverSock,
+		done:       make(chan struct{}),
 		term:       make(chan bool, 1),
 		healthy:    make(chan string),
 		unhealthy:  make(chan string),
@@ -96,6 +105,69 @@ func NewGenericDevicePlugin(deviceName string, devicePath string, devices []*plu
 		devicePath: devicePath,
 	}
 	return dpi
+}
+
+// snapshotDevs returns an independent copy of the current device list, captured
+// under devsMu. Each element is a fresh *pluginapi.Device whose mutable Health
+// field is captured at snapshot time, so a caller may read or marshal it after
+// releasing the lock while another goroutine mutates the live devices (via
+// setDeviceHealth) or replaces the whole set (via applyDevices) without a race,
+// even across overlapping ListAndWatch streams. The Topology pointer is shared
+// because it is never mutated after a device is created.
+func (dpi *GenericDevicePlugin) snapshotDevs() []*pluginapi.Device {
+	dpi.devsMu.RLock()
+	defer dpi.devsMu.RUnlock()
+	out := make([]*pluginapi.Device, len(dpi.devs))
+	for i, dev := range dpi.devs {
+		// Device embeds protoimpl.MessageState and must not be copied by value.
+		out[i] = &pluginapi.Device{ID: dev.ID, Health: dev.Health, Topology: dev.Topology}
+	}
+	return out
+}
+
+// applyDevices replaces the served device set (vGPU rediscovery observed the
+// profile's VFs changed) and asks ListAndWatch to re-advertise and healthCheck
+// to extend its watches. The Health of a device that persists across the change
+// (same ID) is carried over so an already-unhealthy VF is not silently reset to
+// Healthy; a newly added VF starts Healthy. The signals are non-blocking, so a
+// caller (the single-threaded rediscovery loop) never blocks here even if
+// kubelet has not opened a ListAndWatch stream for this plugin.
+func (dpi *GenericDevicePlugin) applyDevices(newDevs []*pluginapi.Device) {
+	dpi.devsMu.Lock()
+	previousHealth := make(map[string]string, len(dpi.devs))
+	for _, dev := range dpi.devs {
+		previousHealth[dev.ID] = dev.Health
+	}
+	for _, dev := range newDevs {
+		if health, ok := previousHealth[dev.ID]; ok {
+			dev.Health = health
+		}
+	}
+	dpi.devs = newDevs
+	dpi.devsMu.Unlock()
+	notify(dpi.refresh)
+	notify(dpi.rewatch)
+}
+
+// setDeviceHealth updates a single device's Health under devsMu.
+func (dpi *GenericDevicePlugin) setDeviceHealth(id string, health string) {
+	dpi.devsMu.Lock()
+	defer dpi.devsMu.Unlock()
+	for _, dev := range dpi.devs {
+		if dev.ID == id {
+			dev.Health = health
+		}
+	}
+}
+
+// notify performs a non-blocking send on a buffered(1) signal channel: it
+// records that a refresh is pending without ever blocking the caller, coalescing
+// with any already-pending signal.
+func notify(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
 }
 
 func buildEnv(envList map[string][]string) map[string]string {
@@ -215,11 +287,21 @@ func connect(socketPath string, timeout time.Duration) (*grpc.ClientConn, error)
 
 // Start starts the gRPC server of the device plugin
 func (dpi *GenericDevicePlugin) Start(stop chan struct{}) error {
+	// Serialize the whole server lifecycle with Stop so a concurrent Stop
+	// (rediscovery removing this profile) and a restart cannot race the server
+	// field. The network calls below are bounded by connectionTimeout, and Stop
+	// is infrequent, so holding the lock across them is acceptable.
+	dpi.lifecycleMu.Lock()
+	defer dpi.lifecycleMu.Unlock()
+
 	if dpi.server != nil {
 		return fmt.Errorf("gRPC server already started")
 	}
 
 	dpi.stop = stop
+	// Fresh per-plugin termination channel for this Start/Stop cycle so a
+	// restart (see restart()) rearms it after a previous Stop closed it.
+	dpi.done = make(chan struct{})
 
 	err := dpi.cleanup()
 	if err != nil {
@@ -256,11 +338,24 @@ func (dpi *GenericDevicePlugin) Start(stop chan struct{}) error {
 	return err
 }
 
-// Stop stops the gRPC server
+// Stop stops the gRPC server. It is safe to call concurrently and repeatedly:
+// lifecycleMu plus the server-nil guard make a second call a no-op, so the
+// close(dpi.done) happens exactly once even when rediscovery's Stop and a
+// healthCheck-driven restart target the same plugin at once.
 func (dpi *GenericDevicePlugin) Stop() error {
+	dpi.lifecycleMu.Lock()
+	defer dpi.lifecycleMu.Unlock()
+
 	if dpi.server == nil {
 		return nil
 	}
+
+	// Terminate this plugin's healthCheck goroutine before the socket is
+	// removed, so it does not observe the removal and try to restart the
+	// plugin. Unlike dpi.stop (shared, closed only at process shutdown),
+	// dpi.done is per-plugin, so this also cleanly stops a single plugin that
+	// rediscovery removes because its vGPU profile is no longer configured.
+	close(dpi.done)
 
 	// Send terminate signal to ListAndWatch()
 	dpi.term <- true
@@ -312,8 +407,9 @@ func (dpi *GenericDevicePlugin) Register() error {
 // ListAndWatch lists devices and update that list according to the health status
 func (dpi *GenericDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin_ListAndWatchServer) error {
 
-	log.Printf("[%s] ListAndWatch called, sending %d devices:", dpi.deviceName, len(dpi.devs))
-	for _, dev := range dpi.devs {
+	devs := dpi.snapshotDevs()
+	log.Printf("[%s] ListAndWatch called, sending %d devices:", dpi.deviceName, len(devs))
+	for _, dev := range devs {
 		numaNodes := "nil"
 		if dev.Topology != nil && len(dev.Topology.Nodes) > 0 {
 			numaNodes = fmt.Sprintf("%d", dev.Topology.Nodes[0].ID)
@@ -321,26 +417,23 @@ func (dpi *GenericDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.Dev
 		log.Printf("  Device ID=%s, Health=%s, NUMA=%s", dev.ID, dev.Health, numaNodes)
 	}
 
-	s.Send(&pluginapi.ListAndWatchResponse{Devices: dpi.devs})
+	s.Send(&pluginapi.ListAndWatchResponse{Devices: devs})
 
 	for {
 		select {
 		case unhealthy := <-dpi.unhealthy:
 			log.Printf("In watch unhealthy")
-			for _, dev := range dpi.devs {
-				if unhealthy == dev.ID {
-					dev.Health = pluginapi.Unhealthy
-				}
-			}
-			s.Send(&pluginapi.ListAndWatchResponse{Devices: dpi.devs})
+			dpi.setDeviceHealth(unhealthy, pluginapi.Unhealthy)
+			s.Send(&pluginapi.ListAndWatchResponse{Devices: dpi.snapshotDevs()})
 		case healthy := <-dpi.healthy:
 			log.Printf("In watch healthy")
-			for _, dev := range dpi.devs {
-				if healthy == dev.ID {
-					dev.Health = pluginapi.Healthy
-				}
-			}
-			s.Send(&pluginapi.ListAndWatchResponse{Devices: dpi.devs})
+			dpi.setDeviceHealth(healthy, pluginapi.Healthy)
+			s.Send(&pluginapi.ListAndWatchResponse{Devices: dpi.snapshotDevs()})
+		case <-dpi.refresh:
+			// vGPU rediscovery replaced this profile's device set via
+			// applyDevices; re-advertise the current list.
+			log.Printf("[%s] Device list updated by rediscovery, re-advertising", dpi.deviceName)
+			s.Send(&pluginapi.ListAndWatchResponse{Devices: dpi.snapshotDevs()})
 		case <-dpi.stop:
 			return nil
 		case <-dpi.term:
@@ -486,7 +579,7 @@ func (dpi *GenericDevicePlugin) GetPreferredAllocation(ctx context.Context, in *
 
 		// Build a map of device ID to NUMA node from our device list
 		deviceToNUMA := make(map[string]int64)
-		for _, dev := range dpi.devs {
+		for _, dev := range dpi.snapshotDevs() {
 			if dev.Topology != nil && len(dev.Topology.Nodes) > 0 {
 				deviceToNUMA[dev.ID] = dev.Topology.Nodes[0].ID
 			}
@@ -644,45 +737,94 @@ func (dpi *GenericDevicePlugin) healthCheck() error {
 		}
 	}
 
-	bdfToIommu := returnBdfToIommuMap()
-	for _, dev := range dpi.devs {
-		iommuID, ok := bdfToIommu[dev.ID]
-		if !ok {
-			log.Printf("%s: Unable to determine IOMMU group for device %s", method, dev.ID)
-			continue
+	// refreshWatches (re)derives the device-path watches from the currently
+	// served devices. It is called once at start and again whenever vGPU
+	// rediscovery signals dpi.rewatch, so a VF added to this profile while the
+	// plugin is running gets its IOMMU-group path watched too. pathDeviceMap is
+	// rebuilt from scratch each call so it only ever maps a path to the device
+	// IDs currently served from it; watchedPaths is cumulative, so a watch left
+	// behind for a path no longer in use is harmless: an event on it finds no
+	// entry in the rebuilt pathDeviceMap and is ignored.
+	refreshWatches := func() {
+		bdfToIommu := returnBdfToIommuMap()
+		clear(pathDeviceMap)
+		for _, dev := range dpi.snapshotDevs() {
+			iommuID, ok := bdfToIommu[dev.ID]
+			if !ok {
+				log.Printf("%s: Unable to determine IOMMU group for device %s", method, dev.ID)
+				continue
+			}
+			devicePath := filepath.Join(path, iommuID)
+			pathDeviceMap[devicePath] = append(pathDeviceMap[devicePath], dev.ID)
+			if _, already := watchedPaths[devicePath]; already {
+				continue
+			}
+			if err := watcher.Add(devicePath); err != nil {
+				log.Printf("%s: Unable to add device path to fsnotify watcher: %v", method, err)
+				continue
+			}
+			log.Printf(" Adding Watcher to Path : %v", devicePath)
+			watchedPaths[devicePath] = struct{}{}
 		}
-		devicePath := filepath.Join(path, iommuID)
-		pathDeviceMap[devicePath] = append(pathDeviceMap[devicePath], dev.ID)
-		if _, already := watchedPaths[devicePath]; already {
-			continue
+	}
+	refreshWatches()
+
+	// Capture the termination channel for this Start/Stop cycle. A later Start
+	// (restart) installs a fresh dpi.done for its own healthCheck goroutine.
+	done := dpi.done
+
+	// sendHealth delivers a health transition to ListAndWatch, but gives up if
+	// the plugin is being torn down. dpi.healthy/dpi.unhealthy are unbuffered
+	// and only ListAndWatch receives them; without this a send would block
+	// forever once ListAndWatch has exited (e.g. Stop() sent term first),
+	// stranding this goroutine and its watcher. It returns false when the
+	// plugin is stopping so the caller returns.
+	sendHealth := func(ch chan string, id string) bool {
+		select {
+		case ch <- id:
+			return true
+		case <-done:
+			return false
+		case <-dpi.stop:
+			return false
 		}
-		err = watcher.Add(devicePath)
-		if err != nil {
-			log.Printf("%s: Unable to add device path to fsnotify watcher: %v", method, err)
-			return err
-		}
-		log.Printf(" Adding Watcher to Path : %v", devicePath)
-		watchedPaths[devicePath] = struct{}{}
 	}
 
 	for {
 		select {
 		case <-dpi.stop:
 			return nil
+		case <-done:
+			return nil
+		case <-dpi.rewatch:
+			refreshWatches()
 		case event := <-watcher.Events:
 			if deviceIDs, ok := pathDeviceMap[event.Name]; ok {
 				// Health in this case is if the device path actually exists
 				if event.Op == fsnotify.Create {
 					for _, id := range deviceIDs {
-						dpi.healthy <- id
+						if !sendHealth(dpi.healthy, id) {
+							return nil
+						}
 					}
 				} else if (event.Op == fsnotify.Remove) || (event.Op == fsnotify.Rename) {
 					log.Printf("%s: Marking device unhealthy: %s", method, event.Name)
 					for _, id := range deviceIDs {
-						dpi.unhealthy <- id
+						if !sendHealth(dpi.unhealthy, id) {
+							return nil
+						}
 					}
 				}
 			} else if event.Name == dpi.socketPath && event.Op == fsnotify.Remove {
+				// If this plugin is being torn down (its own Stop removed the
+				// socket, closing done first), do not resurrect it - just exit.
+				// This also keeps a rediscovery-driven Stop from racing a
+				// restart into recreating a profile that is no longer configured.
+				select {
+				case <-done:
+					return nil
+				default:
+				}
 				// Watcher event for removal of socket file
 				log.Printf("%s: Socket path for GPU device was removed, kubelet likely restarted", method)
 				// Trigger restart of the DP servers
