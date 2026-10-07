@@ -419,6 +419,13 @@ func (dpi *GenericDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Al
 			// function is its own resource, so a sibling can be requested directly.
 			devAddrs = append(devAddrs, bdf)
 
+			// Activate this VF's NVLink fabric partition before the device is
+			// handed to the virt-launcher pod, so the guest's first CUDA init
+			// succeeds on NVSwitch / FABRIC_MODE=2 systems. No-op on non-fabric
+			// systems and for classic passthrough GPUs.
+			if err := activateFabricForVF(bdf); err != nil {
+				return nil, fmt.Errorf("fabric partition activation failed for device %s: %w", bdf, err)
+			}
 			appendDeviceSpec(&deviceSpecs, seenDeviceSpecs, filepath.Join(vfioDevicePath, "vfio"))
 			appendDeviceSpec(&deviceSpecs, seenDeviceSpecs, filepath.Join(vfioDevicePath, iommuId))
 			if iommufdSupported {
