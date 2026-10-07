@@ -1,0 +1,99 @@
+# DaemonSet variant that enables the NVML name-resolution fallback.
+#
+# The default manifest (nvidia-kubevirt-gpu-device-plugin.yaml) mounts only
+# /dev/vfio and is enough for every node where at least one function of each
+# card still lists its creatable_vgpu_types catalog. On a fully consumed node
+# every card's sysfs catalog is reduced to the header, and the plugin then
+# resolves configured vGPU type ids through NVML instead. NVML needs the host
+# driver library (libnvidia-ml.so.1) and the NVIDIA device nodes, which the
+# default manifest does not provide.
+#
+# This variant provides them via hostPath. Because a device node mounted via
+# hostPath is not added to the container's device cgroup, opening it requires
+# privileged: true. If the NVIDIA Container Toolkit is installed on the node,
+# prefer the runtimeClassName: nvidia approach documented in the README, which
+# injects the library and the device nodes (with the matching device-cgroup
+# rules) without privileged. See the README section "NVML fallback (fully
+# consumed nodes)" for the trade-offs.
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-kubevirt-gpu-dp-daemonset
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: nvidia-kubevirt-gpu-dp-ds
+  template:
+    metadata:
+      labels:
+        name: nvidia-kubevirt-gpu-dp-ds
+    spec:
+      priorityClassName: system-node-critical
+      tolerations:
+      # Allow this pod to be rescheduled while the node is in "critical add-ons only" mode.
+      # This, along with the annotation above marks this pod as a critical add-on.
+      - key: CriticalAddonsOnly
+        operator: Exists
+      containers:
+      - name: nvidia-kubevirt-gpu-dp-ctr
+        image: nvcr.io/nvidia/kubevirt-gpu-device-plugin:v1.5.0
+        securityContext:
+          # The NVML fallback opens /dev/nvidiactl and the per-GPU /dev/nvidiaN
+          # nodes. A hostPath device node is not placed in the container's
+          # device cgroup, so a non-privileged container is denied access to it
+          # regardless of the mount, and a plain pod spec has no field to grant
+          # a single host device node. privileged: true is used here as the
+          # only pod-spec-native way to make host device nodes accessible
+          # without the NVIDIA Container Toolkit; for a non-privileged
+          # alternative use runtimeClassName: nvidia (see the README).
+          privileged: true
+        env:
+          # Make the single-file bind of the host driver library loadable by
+          # the dynamic linker. Do NOT add the host lib directory itself to the
+          # search path: it drags the host glibc into the container and breaks
+          # the linker.
+          - name: LD_LIBRARY_PATH
+            value: /host-driver-lib
+        volumeMounts:
+          - name: device-plugin
+            mountPath: /var/lib/kubelet/device-plugins
+          - name: vfio
+            mountPath: /dev/vfio
+          # Single file, not the whole host lib directory - see LD_LIBRARY_PATH.
+          - name: nvml-lib
+            mountPath: /host-driver-lib/libnvidia-ml.so.1
+            readOnly: true
+          # NVIDIA device nodes for NVML: the control node plus one node per
+          # physical GPU. Only these are needed - the plugin's NVML queries do
+          # not open /dev/nvidia-uvm* or /dev/nvidia-caps, and the whole host
+          # /dev is deliberately NOT mounted. This lists /dev/nvidia0 for a
+          # single-GPU node; add a CharDevice volume and mount for each
+          # additional GPU (/dev/nvidia1, /dev/nvidia2, ...).
+          - name: nvidiactl
+            mountPath: /dev/nvidiactl
+          - name: nvidia0
+            mountPath: /dev/nvidia0
+      volumes:
+        - name: device-plugin
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+        - name: vfio
+          hostPath:
+            path: /dev/vfio
+        - name: nvidiactl
+          hostPath:
+            path: /dev/nvidiactl
+            type: CharDevice
+        - name: nvidia0
+          hostPath:
+            path: /dev/nvidia0
+            type: CharDevice
+        # Point this at wherever the host driver installed libnvidia-ml.so.1.
+        # Debian/Ubuntu use /usr/lib/x86_64-linux-gnu; other distributions
+        # differ (find it with: ldconfig -p | grep libnvidia-ml).
+        - name: nvml-lib
+          hostPath:
+            path: /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1
+            type: File
