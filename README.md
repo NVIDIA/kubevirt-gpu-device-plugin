@@ -31,6 +31,15 @@ Before starting the device plug, the GPUs on a kubernetes node need to be config
 ### Whitelist GPU and vGPU in KubeVirt CR
 GPUs and vGPUs should be allowlisted in the KubeVirt CR following the instructions outlined [here](https://kubevirt.io/user-guide/virtual_machines/host-devices/#listing-permitted-devices). An example KubeVirt CR can be found under `/examples`.
 
+The device plugin advertises each GPU and vGPU type as an extended resource named `nvidia.com/<name>`:
+- For a passthrough GPU, `<name>` is the device name from `pci.ids` in upper case, with spaces, `/` and `.` replaced by `_` and any other character removed. For example, `TU104GL [Tesla T4]` (`10de:1eb8`) becomes `nvidia.com/TU104GL_TESLA_T4`.
+- For a vGPU, `<name>` is the vGPU type name with spaces replaced by `_`. For example, `GRID T4-1Q` becomes `nvidia.com/GRID_T4-1Q`.
+
+Resource names are case sensitive. The `resourceName` in the KubeVirt CR and the `deviceName` in the VM spec must match the advertised name exactly, otherwise the VM pod stays `Pending` with `Insufficient nvidia.com/...`. Check the names a node advertises with:
+```shell
+kubectl get node <node-name> -o jsonpath='{.status.allocatable}'
+```
+
 ### Preparing a GPU to be used in pass through mode
 GPU needs to be loaded with VFIO-PCI driver to be used in pass through mode
 
