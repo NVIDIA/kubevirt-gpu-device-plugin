@@ -34,13 +34,13 @@ The [v1.6.0 source archive](https://github.com/NVIDIA/kubevirt-gpu-device-plugin
 
 ## Container Base Image
 
-The final runtime image is built from `nvcr.io/nvidia/distroless/go:v4.1.1`. Its operating-system packages are outside the Go dependency inventory below. The [NVIDIA Distroless OSS source index](https://developer.download.nvidia.com/distroless-oss/go/v4.1.1/index.html) provides version-specific package sources and binaries. This source index is not a substitute for the base image's license and notice texts.
+The final runtime image is built from `nvcr.io/nvidia/distroless/go:v4.1.8`. Its operating-system packages are outside the Go dependency inventory below. The [NVIDIA Distroless OSS source index](https://developer.download.nvidia.com/distroless-oss/go/v4.1.8/index.html) provides version-specific package sources and binaries. This source index is not a substitute for the base image's license and notice texts.
 
-The build stage uses `nvcr.io/nvidia/cuda:13.3.1-base-ubi9`, but that builder filesystem is not redistributed in the final image; only the compiled application and pci.ids data file are copied from that stage.
+The build stage uses `nvcr.io/nvidia/cuda:13.4.3-base-ubi9`, but that builder filesystem is not redistributed in the final image; only the compiled application and pci.ids data file are copied from that stage.
 
 | Image | Version | Role | Notices and source |
 |-------|---------|------|--------------------|
-| `nvcr.io/nvidia/distroless/go` | `v4.1.1` | final runtime base | [NVIDIA Distroless OSS source index](https://developer.download.nvidia.com/distroless-oss/go/v4.1.1/index.html) |
+| `nvcr.io/nvidia/distroless/go` | `v4.1.8` | final runtime base | [NVIDIA Distroless OSS source index](https://developer.download.nvidia.com/distroless-oss/go/v4.1.8/index.html) |
 
 ## Third-Party Software Summary
 
@@ -54,7 +54,7 @@ The build stage uses `nvcr.io/nvidia/cuda:13.3.1-base-ubi9`, but that builder fi
 | `golang.org/x/sys` | `v0.47.0` | BSD-3-Clause | L06a, L06b |
 | `golang.org/x/text` | `v0.41.0` | BSD-3-Clause | L07a, L07b |
 | `google.golang.org/genproto/googleapis/rpc` | `v0.0.0-20260526163538-3dc84a4a5aaa` | Apache-2.0 | L08 |
-| `google.golang.org/grpc` | `v1.83.1` | Apache-2.0 | L09a, L09b, L09c |
+| `google.golang.org/grpc` | `v1.83.2` | Apache-2.0 | L09a, L09b, L09c |
 | `google.golang.org/protobuf` | `v1.36.12-0.20260120151049-f2248ac996af` | BSD-3-Clause | L10a, L10b |
 | `k8s.io/klog/v2` | `v2.140.0` | Apache-2.0 | L11 |
 | `k8s.io/kubelet` | `v0.36.3` | Apache-2.0 | L12 |
@@ -79,9 +79,9 @@ L06b  https://github.com/golang/sys/blob/v0.47.0/PATENTS
 L07a  https://github.com/golang/text/blob/v0.41.0/LICENSE
 L07b  https://github.com/golang/text/blob/v0.41.0/PATENTS
 L08   https://github.com/googleapis/go-genproto/blob/3dc84a4a5aaa/LICENSE
-L09a  https://github.com/grpc/grpc-go/blob/v1.83.1/AUTHORS
-L09b  https://github.com/grpc/grpc-go/blob/v1.83.1/LICENSE
-L09c  https://github.com/grpc/grpc-go/blob/v1.83.1/NOTICE.txt
+L09a  https://github.com/grpc/grpc-go/blob/v1.83.2/AUTHORS
+L09b  https://github.com/grpc/grpc-go/blob/v1.83.2/LICENSE
+L09c  https://github.com/grpc/grpc-go/blob/v1.83.2/NOTICE.txt
 L10a  https://github.com/protocolbuffers/protobuf-go/blob/f2248ac996af/LICENSE
 L10b  https://github.com/protocolbuffers/protobuf-go/blob/f2248ac996af/PATENTS
 L11   https://github.com/kubernetes/klog/blob/v2.140.0/LICENSE
@@ -1084,19 +1084,19 @@ Copyright 2026 Google LLC
 
 ### google.golang.org/grpc
 
-* Version: `v1.83.1`
+* Version: `v1.83.2`
 * License: Apache-2.0
-* Location: [LICENSE](https://github.com/grpc/grpc-go/blob/v1.83.1/LICENSE)
+* Location: [LICENSE](https://github.com/grpc/grpc-go/blob/v1.83.2/LICENSE)
 * Bundled source: `vendor/google.golang.org/grpc`
 
-#### [AUTHORS](https://github.com/grpc/grpc-go/blob/v1.83.1/AUTHORS)
+#### [AUTHORS](https://github.com/grpc/grpc-go/blob/v1.83.2/AUTHORS)
 
 ```text
 Google Inc.
 
 ```
 
-#### [LICENSE](https://github.com/grpc/grpc-go/blob/v1.83.1/LICENSE)
+#### [LICENSE](https://github.com/grpc/grpc-go/blob/v1.83.2/LICENSE)
 
 ```text
 
@@ -1304,7 +1304,7 @@ Google Inc.
 
 ```
 
-#### [NOTICE.txt](https://github.com/grpc/grpc-go/blob/v1.83.1/NOTICE.txt)
+#### [NOTICE.txt](https://github.com/grpc/grpc-go/blob/v1.83.2/NOTICE.txt)
 
 ```text
 Copyright 2014 gRPC authors.
