@@ -173,9 +173,9 @@ lrwxrwxrwx. 1 root root 0 Nov 24 13:33 aa618089-8b16-4d01-a136-25a0f3c73123 -> .
 
 ## Docs
 ### Deployment
-The Daemonset creation yaml can be used to deploy the device plugin. 
-```
-kubectl apply -f nvidia-kubevirt-gpu-device-plugin.yaml
+From the repository root, deploy the device plugin DaemonSet:
+```shell
+kubectl apply -f manifests/nvidia-kubevirt-gpu-device-plugin.yaml
 ```
 
 Example YAML files for creating VMs with GPU/vGPU are in the `examples` folder
