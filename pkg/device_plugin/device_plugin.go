@@ -85,6 +85,8 @@ var readVgpuIDFromFile = readVgpuIDFromFileFunc
 var readGpuIDForVgpu = readGpuIDForVgpuFunc
 var startVgpuDevicePlugin = startVgpuDevicePluginFunc
 var stop = make(chan struct{})
+var PGPUAlias string
+var VGPUAlias string
 
 func InitiateDevicePlugin() {
 	//Identifies GPUs and represents it in appropriate structures
@@ -121,10 +123,15 @@ func createDevicePlugins() {
 			log.Printf("Registering device: ID=%s, NUMA=%d, Health=%s", device.ID, gpuDev.numaNode, device.Health)
 			devs = append(devs, device)
 		}
-		deviceName := getDeviceName(k)
-		if deviceName == "" {
-			log.Printf("Error: Could not find device name for device id: %s", k)
-			deviceName = k
+		deviceName := ""
+		if PGPUAlias != "" {
+			deviceName = PGPUAlias
+		} else {
+			deviceName = getDeviceName(k)
+			if deviceName == "" {
+				log.Printf("Error: Could not find device name for device id: %s", k)
+				deviceName = k
+			}
 		}
 		log.Printf("DP Name %s", deviceName)
 		dp := NewGenericDevicePlugin(deviceName, "/dev/vfio/", devs)
@@ -149,9 +156,14 @@ func createDevicePlugins() {
 				},
 			})
 		}
-		deviceName := getDeviceName(k)
-		if deviceName == "" {
-			deviceName = k
+		deviceName := ""
+		if VGPUAlias != "" {
+			deviceName = VGPUAlias
+		} else {
+			deviceName = getDeviceName(k)
+			if deviceName == "" {
+				deviceName = k
+			}
 		}
 		log.Printf("DP Name %s", deviceName)
 		dp := NewGenericVGpuDevicePlugin(deviceName, vGpuBasePath, devs)
