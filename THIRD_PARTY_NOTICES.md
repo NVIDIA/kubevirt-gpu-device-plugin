@@ -34,13 +34,13 @@ The [v1.6.0 source archive](https://github.com/NVIDIA/kubevirt-gpu-device-plugin
 
 ## Container Base Image
 
-The final runtime image is built from `nvcr.io/nvidia/distroless/go:v4.1.8`. Its operating-system packages are outside the Go dependency inventory below. The [NVIDIA Distroless OSS source index](https://developer.download.nvidia.com/distroless-oss/go/v4.1.8/index.html) provides version-specific package sources and binaries. This source index is not a substitute for the base image's license and notice texts.
+The final runtime image is built from `nvcr.io/nvidia/distroless/go:v4.2.1`. Its operating-system packages are outside the Go dependency inventory below. The [NVIDIA Distroless OSS source index](https://developer.download.nvidia.com/distroless-oss/go/v4.2.1/index.html) provides version-specific package sources and binaries. This source index is not a substitute for the base image's license and notice texts.
 
 The build stage uses `nvcr.io/nvidia/cuda:13.4.3-base-ubi9`, but that builder filesystem is not redistributed in the final image; only the compiled application and pci.ids data file are copied from that stage.
 
 | Image | Version | Role | Notices and source |
 |-------|---------|------|--------------------|
-| `nvcr.io/nvidia/distroless/go` | `v4.1.8` | final runtime base | [NVIDIA Distroless OSS source index](https://developer.download.nvidia.com/distroless-oss/go/v4.1.8/index.html) |
+| `nvcr.io/nvidia/distroless/go` | `v4.2.1` | final runtime base | [NVIDIA Distroless OSS source index](https://developer.download.nvidia.com/distroless-oss/go/v4.2.1/index.html) |
 
 ## Third-Party Software Summary
 
