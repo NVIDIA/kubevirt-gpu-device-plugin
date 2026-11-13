@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-NVIDIA KubeVirt GPU Device Plugin v1.6.0
+NVIDIA KubeVirt GPU Device Plugin v1.6.1
 
 Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 
@@ -30,7 +30,7 @@ classification is `Apache-2.0 AND MIT`.
 Project offers it under GPL-2.0-or-later OR BSD-3-Clause; NVIDIA selects
 BSD-3-Clause for this distribution.
 
-The [v1.6.0 source archive](https://github.com/NVIDIA/kubevirt-gpu-device-plugin/archive/refs/tags/v1.6.0.tar.gz) contains the exact vendored source and legal files used here.
+The [v1.6.1 source archive](https://github.com/NVIDIA/kubevirt-gpu-device-plugin/archive/refs/tags/v1.6.1.tar.gz) contains the exact vendored source and legal files used here.
 
 ## Container Base Image
 
@@ -48,14 +48,14 @@ The build stage uses `nvcr.io/nvidia/cuda:13.4.3-base-ubi9`, but that builder fi
 |---------|---------|-----------------|--------------|
 | `github.com/NVIDIA/gpu-monitoring-tools` | `v0.0.0-20211102125545-5a2c58442e48` | Apache-2.0 | L01 |
 | `github.com/fsnotify/fsnotify` | `v1.10.1` | BSD-3-Clause | L02 |
-| `github.com/go-logr/logr` | `v1.4.3` | Apache-2.0 | L03 |
+| `github.com/go-logr/logr` | `v1.4.4` | Apache-2.0 | L03 |
 | `go.yaml.in/yaml/v3` | `v3.0.4` | Apache-2.0 AND MIT | L04a, L04b |
-| `golang.org/x/net` | `v0.58.0` | BSD-3-Clause | L05a, L05b |
-| `golang.org/x/sys` | `v0.47.0` | BSD-3-Clause | L06a, L06b |
-| `golang.org/x/text` | `v0.41.0` | BSD-3-Clause | L07a, L07b |
-| `google.golang.org/genproto/googleapis/rpc` | `v0.0.0-20260526163538-3dc84a4a5aaa` | Apache-2.0 | L08 |
-| `google.golang.org/grpc` | `v1.83.2` | Apache-2.0 | L09a, L09b, L09c |
-| `google.golang.org/protobuf` | `v1.36.12-0.20260120151049-f2248ac996af` | BSD-3-Clause | L10a, L10b |
+| `golang.org/x/net` | `v0.62.0` | BSD-3-Clause | L05a, L05b |
+| `golang.org/x/sys` | `v0.49.0` | BSD-3-Clause | L06a, L06b |
+| `golang.org/x/text` | `v0.43.0` | BSD-3-Clause | L07a, L07b |
+| `google.golang.org/genproto/googleapis/rpc` | `v0.0.0-20260817212433-ac3dfec99bb1` | Apache-2.0 | L08 |
+| `google.golang.org/grpc` | `v1.85.0` | Apache-2.0 | L09a, L09b, L09c |
+| `google.golang.org/protobuf` | `v1.36.12` | BSD-3-Clause | L10a, L10b |
 | `k8s.io/klog/v2` | `v2.140.0` | Apache-2.0 | L11 |
 | `k8s.io/kubelet` | `v0.36.3` | Apache-2.0 | L12 |
 | `pci.ids` | `2025.07.11` | BSD-3-Clause (selected from GPL-2.0-or-later OR BSD-3-Clause) | L13 |
@@ -69,24 +69,24 @@ supplemental; the corresponding legal texts are reproduced below.
 ```text
 L01   https://github.com/NVIDIA/gpu-monitoring-tools/blob/5a2c58442e48/LICENSE
 L02   https://github.com/fsnotify/fsnotify/blob/v1.10.1/LICENSE
-L03   https://github.com/go-logr/logr/blob/v1.4.3/LICENSE
+L03   https://github.com/go-logr/logr/blob/v1.4.4/LICENSE
 L04a  https://github.com/yaml/go-yaml/blob/v3.0.4/LICENSE
 L04b  https://github.com/yaml/go-yaml/blob/v3.0.4/NOTICE
-L05a  https://github.com/golang/net/blob/v0.58.0/LICENSE
-L05b  https://github.com/golang/net/blob/v0.58.0/PATENTS
-L06a  https://github.com/golang/sys/blob/v0.47.0/LICENSE
-L06b  https://github.com/golang/sys/blob/v0.47.0/PATENTS
-L07a  https://github.com/golang/text/blob/v0.41.0/LICENSE
-L07b  https://github.com/golang/text/blob/v0.41.0/PATENTS
-L08   https://github.com/googleapis/go-genproto/blob/3dc84a4a5aaa/LICENSE
-L09a  https://github.com/grpc/grpc-go/blob/v1.83.2/AUTHORS
-L09b  https://github.com/grpc/grpc-go/blob/v1.83.2/LICENSE
-L09c  https://github.com/grpc/grpc-go/blob/v1.83.2/NOTICE.txt
-L10a  https://github.com/protocolbuffers/protobuf-go/blob/f2248ac996af/LICENSE
-L10b  https://github.com/protocolbuffers/protobuf-go/blob/f2248ac996af/PATENTS
+L05a  https://github.com/golang/net/blob/v0.62.0/LICENSE
+L05b  https://github.com/golang/net/blob/v0.62.0/PATENTS
+L06a  https://github.com/golang/sys/blob/v0.49.0/LICENSE
+L06b  https://github.com/golang/sys/blob/v0.49.0/PATENTS
+L07a  https://github.com/golang/text/blob/v0.43.0/LICENSE
+L07b  https://github.com/golang/text/blob/v0.43.0/PATENTS
+L08   https://github.com/googleapis/go-genproto/blob/ac3dfec99bb1/LICENSE
+L09a  https://github.com/grpc/grpc-go/blob/v1.85.0/AUTHORS
+L09b  https://github.com/grpc/grpc-go/blob/v1.85.0/LICENSE
+L09c  https://github.com/grpc/grpc-go/blob/v1.85.0/NOTICE.txt
+L10a  https://github.com/protocolbuffers/protobuf-go/blob/v1.36.12/LICENSE
+L10b  https://github.com/protocolbuffers/protobuf-go/blob/v1.36.12/PATENTS
 L11   https://github.com/kubernetes/klog/blob/v2.140.0/LICENSE
 L12   https://github.com/kubernetes/kubelet/blob/v0.36.3/LICENSE
-L13   https://github.com/NVIDIA/kubevirt-gpu-device-plugin/blob/v1.6.0/utils/pci.ids#L12-L18
+L13   https://github.com/NVIDIA/kubevirt-gpu-device-plugin/blob/v1.6.1/utils/pci.ids#L12-L18
 ```
 
 ## Third-Party Software License and Notice Texts
@@ -355,9 +355,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### github.com/go-logr/logr
 
-* Version: `v1.4.3`
+* Version: `v1.4.4`
 * License: Apache-2.0
-* Location: [LICENSE](https://github.com/go-logr/logr/blob/v1.4.3/LICENSE)
+* Location: [LICENSE](https://github.com/go-logr/logr/blob/v1.4.4/LICENSE)
 * Bundled source: `vendor/github.com/go-logr/logr`
 
 #### Copyright notices
@@ -368,7 +368,7 @@ Copyright 2020 The logr Authors.
 Copyright 2023 The logr Authors.
 ```
 
-#### [LICENSE](https://github.com/go-logr/logr/blob/v1.4.3/LICENSE)
+#### [LICENSE](https://github.com/go-logr/logr/blob/v1.4.4/LICENSE)
 
 ```text
                                  Apache License
@@ -659,12 +659,12 @@ limitations under the License.
 
 ### golang.org/x/net
 
-* Version: `v0.58.0`
+* Version: `v0.62.0`
 * License: BSD-3-Clause
-* Location: [LICENSE](https://github.com/golang/net/blob/v0.58.0/LICENSE)
+* Location: [LICENSE](https://github.com/golang/net/blob/v0.62.0/LICENSE)
 * Bundled source: `vendor/golang.org/x/net`
 
-#### [LICENSE](https://github.com/golang/net/blob/v0.58.0/LICENSE)
+#### [LICENSE](https://github.com/golang/net/blob/v0.62.0/LICENSE)
 
 ```text
 Copyright 2009 The Go Authors.
@@ -697,7 +697,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ```
 
-#### [PATENTS](https://github.com/golang/net/blob/v0.58.0/PATENTS)
+#### [PATENTS](https://github.com/golang/net/blob/v0.62.0/PATENTS)
 
 ```text
 Additional IP Rights Grant (Patents)
@@ -727,12 +727,12 @@ shall terminate as of the date such litigation is filed.
 
 ### golang.org/x/sys
 
-* Version: `v0.47.0`
+* Version: `v0.49.0`
 * License: BSD-3-Clause
-* Location: [LICENSE](https://github.com/golang/sys/blob/v0.47.0/LICENSE)
+* Location: [LICENSE](https://github.com/golang/sys/blob/v0.49.0/LICENSE)
 * Bundled source: `vendor/golang.org/x/sys`
 
-#### [LICENSE](https://github.com/golang/sys/blob/v0.47.0/LICENSE)
+#### [LICENSE](https://github.com/golang/sys/blob/v0.49.0/LICENSE)
 
 ```text
 Copyright 2009 The Go Authors.
@@ -765,7 +765,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ```
 
-#### [PATENTS](https://github.com/golang/sys/blob/v0.47.0/PATENTS)
+#### [PATENTS](https://github.com/golang/sys/blob/v0.49.0/PATENTS)
 
 ```text
 Additional IP Rights Grant (Patents)
@@ -795,12 +795,12 @@ shall terminate as of the date such litigation is filed.
 
 ### golang.org/x/text
 
-* Version: `v0.41.0`
+* Version: `v0.43.0`
 * License: BSD-3-Clause
-* Location: [LICENSE](https://github.com/golang/text/blob/v0.41.0/LICENSE)
+* Location: [LICENSE](https://github.com/golang/text/blob/v0.43.0/LICENSE)
 * Bundled source: `vendor/golang.org/x/text`
 
-#### [LICENSE](https://github.com/golang/text/blob/v0.41.0/LICENSE)
+#### [LICENSE](https://github.com/golang/text/blob/v0.43.0/LICENSE)
 
 ```text
 Copyright 2009 The Go Authors.
@@ -833,7 +833,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ```
 
-#### [PATENTS](https://github.com/golang/text/blob/v0.41.0/PATENTS)
+#### [PATENTS](https://github.com/golang/text/blob/v0.43.0/PATENTS)
 
 ```text
 Additional IP Rights Grant (Patents)
@@ -863,9 +863,9 @@ shall terminate as of the date such litigation is filed.
 
 ### google.golang.org/genproto/googleapis/rpc
 
-* Version: `v0.0.0-20260526163538-3dc84a4a5aaa`
+* Version: `v0.0.0-20260817212433-ac3dfec99bb1`
 * License: Apache-2.0
-* Location: [LICENSE](https://github.com/googleapis/go-genproto/blob/3dc84a4a5aaa/LICENSE)
+* Location: [LICENSE](https://github.com/googleapis/go-genproto/blob/ac3dfec99bb1/LICENSE)
 * Bundled source: `vendor/google.golang.org/genproto/googleapis/rpc`
 
 #### Copyright notices
@@ -874,7 +874,7 @@ shall terminate as of the date such litigation is filed.
 Copyright 2026 Google LLC
 ```
 
-#### [LICENSE](https://github.com/googleapis/go-genproto/blob/3dc84a4a5aaa/LICENSE)
+#### [LICENSE](https://github.com/googleapis/go-genproto/blob/ac3dfec99bb1/LICENSE)
 
 ```text
 
@@ -1084,19 +1084,19 @@ Copyright 2026 Google LLC
 
 ### google.golang.org/grpc
 
-* Version: `v1.83.2`
+* Version: `v1.85.0`
 * License: Apache-2.0
-* Location: [LICENSE](https://github.com/grpc/grpc-go/blob/v1.83.2/LICENSE)
+* Location: [LICENSE](https://github.com/grpc/grpc-go/blob/v1.85.0/LICENSE)
 * Bundled source: `vendor/google.golang.org/grpc`
 
-#### [AUTHORS](https://github.com/grpc/grpc-go/blob/v1.83.2/AUTHORS)
+#### [AUTHORS](https://github.com/grpc/grpc-go/blob/v1.85.0/AUTHORS)
 
 ```text
 Google Inc.
 
 ```
 
-#### [LICENSE](https://github.com/grpc/grpc-go/blob/v1.83.2/LICENSE)
+#### [LICENSE](https://github.com/grpc/grpc-go/blob/v1.85.0/LICENSE)
 
 ```text
 
@@ -1304,7 +1304,7 @@ Google Inc.
 
 ```
 
-#### [NOTICE.txt](https://github.com/grpc/grpc-go/blob/v1.83.2/NOTICE.txt)
+#### [NOTICE.txt](https://github.com/grpc/grpc-go/blob/v1.85.0/NOTICE.txt)
 
 ```text
 Copyright 2014 gRPC authors.
@@ -1325,12 +1325,12 @@ limitations under the License.
 
 ### google.golang.org/protobuf
 
-* Version: `v1.36.12-0.20260120151049-f2248ac996af`
+* Version: `v1.36.12`
 * License: BSD-3-Clause
-* Location: [LICENSE](https://github.com/protocolbuffers/protobuf-go/blob/f2248ac996af/LICENSE)
+* Location: [LICENSE](https://github.com/protocolbuffers/protobuf-go/blob/v1.36.12/LICENSE)
 * Bundled source: `vendor/google.golang.org/protobuf`
 
-#### [LICENSE](https://github.com/protocolbuffers/protobuf-go/blob/f2248ac996af/LICENSE)
+#### [LICENSE](https://github.com/protocolbuffers/protobuf-go/blob/v1.36.12/LICENSE)
 
 ```text
 Copyright (c) 2018 The Go Authors. All rights reserved.
@@ -1363,7 +1363,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ```
 
-#### [PATENTS](https://github.com/protocolbuffers/protobuf-go/blob/f2248ac996af/PATENTS)
+#### [PATENTS](https://github.com/protocolbuffers/protobuf-go/blob/v1.36.12/PATENTS)
 
 ```text
 Additional IP Rights Grant (Patents)
@@ -1838,7 +1838,7 @@ Copyright The Kubernetes Authors.
 * Version: `2025.07.11`
 * Chosen license: BSD-3-Clause
 * SHA-256: `a96cd22db83c10d9141ecd7b14325ed9c936de5ef01d78e7e7e43f070184270b`
-* Source and license notice: [PCI ID database shipped with v1.6.0](https://github.com/NVIDIA/kubevirt-gpu-device-plugin/blob/v1.6.0/utils/pci.ids#L1-L18)
+* Source and license notice: [PCI ID database shipped with v1.6.1](https://github.com/NVIDIA/kubevirt-gpu-device-plugin/blob/v1.6.1/utils/pci.ids#L1-L18)
 * Original project: [PCI ID Project](https://pci-ids.ucw.cz/)
 * Copyright holders: Martin Mares and Albert Pool
 
