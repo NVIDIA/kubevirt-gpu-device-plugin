@@ -16,7 +16,7 @@ spec:
           bus: virtio
         name: cloudinitdisk
       gpus:
-      - deviceName: nvidia.com/GP102GL_Tesla_P40
+      - deviceName: nvidia.com/GP102GL_TESLA_P40
         name: gpu1
       rng: {}
     machine:
