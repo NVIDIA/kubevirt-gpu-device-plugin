@@ -195,6 +195,20 @@ var _ = Describe("Generic Device", func() {
 		Expect(responses.GetContainerResponses()[0].Devices[1].Permissions).To(Equal("mrw"))
 	})
 
+	It("Should give each container only the GPU addresses it requested", func() {
+		readIDFromFile = getFakeIDFromFileForSharedEGM
+		envKey := gpuPrefix + "_FOO"
+		requests := pluginapi.AllocateRequest{}
+		requests.ContainerRequests = append(requests.ContainerRequests,
+			&pluginapi.ContainerAllocateRequest{DevicesIds: []string{pciAddress1}},
+			&pluginapi.ContainerAllocateRequest{DevicesIds: []string{pciAddress2}},
+		)
+		responses, err := dpi.Allocate(context.Background(), &requests)
+		Expect(err).To(BeNil())
+		Expect(responses.GetContainerResponses()[0].Envs[envKey]).To(Equal(pciAddress1))
+		Expect(responses.GetContainerResponses()[1].Envs[envKey]).To(Equal(pciAddress2))
+	})
+
 	It("Should inject EGM device when all associated GPUs are allocated", func() {
 		readHexIDFromFile = getFakeHexIDFromFileForSharedEGM
 		discoverEGMDevices = getFakeSharedEGMDevices
